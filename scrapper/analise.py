@@ -358,7 +358,7 @@ def gerar_relatorio_html(
   <p>Fonte: Quantum Comparador de Ativos &nbsp;|&nbsp;
      Período: {periodo_inicio} → {periodo_fim} &nbsp;|&nbsp;
      {num_dias} dias úteis</p>
-  <p style="margin-top:8px"><a href="javascript:history.back()">← Voltar ao Dashboard</a></p>
+  <p style="margin-top:8px"><a href="/">← Voltar ao Dashboard</a></p>
 </header>
 <div class="container">
 
