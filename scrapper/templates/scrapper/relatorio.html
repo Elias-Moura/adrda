@@ -1,0 +1,232 @@
+{% extends "scrapper/base.html" %}
+{% block title %}Gerar Relatório — Quantum Scrapper{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+
+    <div class="d-flex align-items-center gap-3 mb-4">
+      <a href="{% url 'index' %}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+      <h4 class="mb-0"><i class="bi bi-bar-chart-line-fill me-2 text-dark"></i>Gerar Relatório</h4>
+    </div>
+
+    {% if erro %}
+    <div class="alert alert-warning">{{ erro }}</div>
+    {% endif %}
+
+    {% if not carteiras %}
+    <div class="card p-5 text-center text-muted">
+      <i class="bi bi-database-x fs-1 mb-3 d-block"></i>
+      <p class="mb-1">Nenhum ativo importado ainda.</p>
+      <p class="small">Importe ativos via Excel ou CNPJ no Dashboard primeiro.</p>
+      <a href="{% url 'index' %}" class="btn btn-primary mt-3">Ir para o Dashboard</a>
+    </div>
+    {% else %}
+
+    <form method="get" action="{% url 'relatorio' %}" target="_blank">
+
+      <!-- Período -->
+      <div class="card p-4 mb-4">
+        <h6 class="mb-3 fw-semibold"><i class="bi bi-calendar-range me-2 text-dark"></i>Período</h6>
+        <p class="text-muted mb-3" style="font-size:.82rem">
+          Todos os ativos serão alinhados a este período.
+          Se os dados ainda não existirem no banco, serão buscados automaticamente no Quantum.
+        </p>
+        <div class="row g-3">
+          <div class="col-sm-6">
+            <label class="form-label small fw-semibold">Data início</label>
+            <input type="date" class="form-control" name="data_inicio"
+              value="{{ data_inicio }}" required>
+          </div>
+          <div class="col-sm-6">
+            <label class="form-label small fw-semibold">Data fim</label>
+            <input type="date" class="form-control" name="data_fim"
+              value="{{ data_fim }}" required>
+          </div>
+        </div>
+      </div>
+
+      <!-- Carteiras -->
+      <div class="card p-4 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-briefcase me-2 text-primary"></i>Carteiras / Fundos</h6>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-link btn-sm p-0 sel-all" data-group="carteira">todos</button>
+            <button type="button" class="btn btn-link btn-sm p-0 des-all" data-group="carteira">nenhum</button>
+          </div>
+        </div>
+        <input type="text" class="form-control form-control-sm mb-3 filtro-grupo"
+          data-group="carteira" placeholder="Filtrar carteiras…" autocomplete="off">
+        <div class="row g-2">
+          {% for aq in carteiras %}
+          <div class="col-sm-6">
+            <div class="form-check">
+              <input class="form-check-input grp-carteira" type="checkbox"
+                name="ids" value="{{ aq.id }}" id="c_{{ aq.id }}" checked>
+              <label class="form-check-label small" for="c_{{ aq.id }}">
+                {{ aq.ativo.nome }}
+                <span class="text-muted" style="font-size:.75rem">· {{ aq.tipo }}</span>
+              </label>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Índices -->
+      {% if indices %}
+      <div class="card p-4 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h6 class="mb-0 fw-semibold"><i class="bi bi-graph-up me-2 text-secondary"></i>Índices de Referência</h6>
+          <div class="d-flex gap-2">
+            <button type="button" class="btn btn-link btn-sm p-0 sel-all" data-group="indice">todos</button>
+            <button type="button" class="btn btn-link btn-sm p-0 des-all" data-group="indice">nenhum</button>
+          </div>
+        </div>
+        <input type="text" class="form-control form-control-sm mb-3 filtro-grupo"
+          data-group="indice" placeholder="Filtrar índices…" autocomplete="off">
+        <div class="row g-2">
+          {% for aq in indices %}
+          <div class="col-sm-4">
+            <div class="form-check">
+              <input class="form-check-input grp-indice" type="checkbox"
+                name="ids" value="{{ aq.id }}" id="i_{{ aq.id }}" checked>
+              <label class="form-check-label small" for="i_{{ aq.id }}">
+                {{ aq.ativo.nome }}
+              </label>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      <button type="submit" class="btn btn-dark btn-lg w-100">
+        <i class="bi bi-bar-chart-line-fill me-2"></i>Gerar Relatório
+      </button>
+      <p class="text-muted text-center mt-2" style="font-size:.8rem">
+        O relatório abre em uma nova aba.
+      </p>
+
+    </form>
+
+    <hr class="my-4">
+
+    <!-- Exportar metadados -->
+    <button id="btn-exportar" class="btn btn-success btn-lg w-100">
+      <i class="bi bi-file-earmark-excel-fill me-2"></i>Exportar Metadados para Excel
+    </button>
+    <p class="text-muted text-center mt-2 mb-4" style="font-size:.8rem">
+      Exporta os dados complementares (gestora, taxas, CNPJ…) dos ativos selecionados acima.
+    </p>
+
+    <hr class="my-4">
+
+    <!-- Exportar cotas + retorno LN -->
+    <div class="card p-4">
+      <h6 class="fw-semibold mb-3">
+        <i class="bi bi-table me-2 text-primary"></i>Exportar Cotas + Retorno LN
+      </h6>
+      <p class="text-muted mb-3" style="font-size:.82rem">
+        Gera um Excel com duas abas: <strong>Cotas</strong> (base 100) e
+        <strong>Retorno_LN</strong> (log-retorno diário ln P<sub>t</sub> / P<sub>t−1</sub>).
+      </p>
+
+      <!-- Seleção de ativos -->
+      <div class="mb-3">
+        <label class="form-label small fw-semibold">Ativos</label>
+        <div class="d-flex gap-4 mb-2">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="cotas_sel"
+              id="cotas_todos" value="todos" checked>
+            <label class="form-check-label small" for="cotas_todos">Todos os ativos</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="cotas_sel"
+              id="cotas_sel_acima" value="selecionados">
+            <label class="form-check-label small" for="cotas_sel_acima">Usar seleção acima</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Período opcional -->
+      <div class="row g-2 align-items-end">
+        <div class="col-sm-4">
+          <label class="form-label small fw-semibold">Data início <span class="text-muted fw-normal">(opcional)</span></label>
+          <input type="date" class="form-control form-control-sm" id="cotas_di">
+        </div>
+        <div class="col-sm-4">
+          <label class="form-label small fw-semibold">Data fim <span class="text-muted fw-normal">(opcional)</span></label>
+          <input type="date" class="form-control form-control-sm" id="cotas_df">
+        </div>
+        <div class="col-sm-4">
+          <button id="btn-cotas" class="btn btn-primary w-100">
+            <i class="bi bi-download me-1"></i>Baixar Excel
+          </button>
+        </div>
+      </div>
+    </div>
+
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Filtro por grupo
+document.querySelectorAll('.filtro-grupo').forEach(input => {
+  input.addEventListener('input', function () {
+    const q = this.value.toLowerCase();
+    const group = this.dataset.group;
+    document.querySelectorAll(`.grp-${group}`).forEach(cb => {
+      const row = cb.closest('.col-sm-4, .col-sm-6');
+      row.style.display = cb.closest('label, .form-check').querySelector('label')
+        .textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+});
+
+// "todos" respeita o filtro atual
+document.getElementById('btn-exportar')?.addEventListener('click', () => {
+  const ids = [...document.querySelectorAll('.grp-carteira:checked')]
+    .map(c => `ids=${encodeURIComponent(c.value)}`).join('&');
+  if (!ids) { alert('Selecione pelo menos um ativo para exportar.'); return; }
+  window.location.href = `/exportar-excel/?${ids}`;
+});
+
+document.getElementById('btn-cotas')?.addEventListener('click', () => {
+  const params = [];
+
+  if (document.getElementById('cotas_sel_acima').checked) {
+    const ids = [...document.querySelectorAll('.grp-carteira:checked')]
+      .map(c => `ids=${encodeURIComponent(c.value)}`);
+    if (!ids.length) { alert('Selecione pelo menos um ativo acima.'); return; }
+    params.push(...ids);
+  }
+
+  const di = document.getElementById('cotas_di').value;
+  const df = document.getElementById('cotas_df').value;
+  if (di) params.push(`data_inicio=${di}`);
+  if (df) params.push(`data_fim=${df}`);
+
+  window.location.href = `/exportar-cotas/${params.length ? '?' + params.join('&') : ''}`;
+});
+
+document.querySelectorAll('.sel-all').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll(`.grp-${btn.dataset.group}`).forEach(c => {
+      if (c.closest('.col-sm-4, .col-sm-6').style.display !== 'none') c.checked = true;
+    });
+  });
+});
+document.querySelectorAll('.des-all').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll(`.grp-${btn.dataset.group}`).forEach(c => c.checked = false);
+  });
+});
+</script>
+{% endblock %}

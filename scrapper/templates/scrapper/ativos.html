@@ -1,0 +1,56 @@
+{% extends "scrapper/base.html" %}
+{% block title %}Ativos — Quantum Scrapper{% endblock %}
+{% block nav_ativos %}fw-bold text-white{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-table me-2"></i>Ativos no Banco ({{ ativos.count }})</h4>
+  <a href="{% url 'index' %}" class="btn btn-sm btn-outline-secondary">
+    <i class="bi bi-arrow-left me-1"></i>Voltar
+  </a>
+</div>
+
+<div class="card p-0">
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-dark">
+        <tr>
+          <th>Nome</th>
+          <th>CNPJ</th>
+          <th>ID Quantum</th>
+          <th>Tipo</th>
+          <th>Gestora</th>
+          <th>1ª Cota</th>
+          <th>Atualizado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ativo in ativos %}
+        <tr>
+          <td class="fw-semibold">{{ ativo.nome }}</td>
+          <td class="text-muted font-monospace small">{{ ativo.cnpj }}</td>
+          {% if ativo.quantum %}
+            <td class="font-monospace small">{{ ativo.quantum.id_quantum }}</td>
+            <td><span class="badge bg-secondary">{{ ativo.quantum.tipo }}</span></td>
+            <td class="small">{{ ativo.quantum.gestora|default:"—" }}</td>
+            <td class="small text-muted">
+              {% if ativo.quantum.primeira_cota %}{{ ativo.quantum.primeira_cota|date:"d/m/Y" }}{% else %}—{% endif %}
+            </td>
+            <td class="small text-muted">{{ ativo.quantum.atualizado_em|date:"d/m/Y H:i" }}</td>
+          {% else %}
+            <td colspan="5" class="text-muted small">Sem dados Quantum</td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7" class="text-center text-muted py-4">
+            Nenhum ativo importado ainda.
+            <a href="{% url 'index' %}">Importe via Excel</a>.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

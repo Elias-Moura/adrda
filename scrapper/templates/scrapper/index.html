@@ -1,0 +1,223 @@
+{% extends "scrapper/base.html" %}
+{% block title %}Dashboard — Quantum Scrapper{% endblock %}
+{% block nav_dashboard %}fw-bold text-white{% endblock %}
+
+{% block content %}
+
+<!-- Stats + botão relatório -->
+<div class="row g-3 align-items-center mb-4">
+  <div class="col-auto">
+    <div class="card px-4 py-3">
+      <div class="text-muted" style="font-size:.72rem;text-transform:uppercase;letter-spacing:.06em">Ativos no banco</div>
+      <div class="fs-2 fw-bold text-primary">{{ ativos_count }}</div>
+    </div>
+  </div>
+  <div class="col-auto">
+    {% if tem_cotacoes %}
+    <a href="{% url 'relatorio' %}" class="btn btn-dark btn-lg">
+      <i class="bi bi-bar-chart-line-fill me-2"></i>Selecionar e gerar relatório
+    </a>
+    {% else %}
+    <button class="btn btn-outline-secondary btn-lg" disabled>
+      <i class="bi bi-bar-chart-line me-2"></i>Sem cotações para relatório
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-4">
+
+  <!-- ── Coluna esquerda: importar ── -->
+  <div class="col-xl-4">
+
+    <!-- Excel -->
+    <div class="card p-4 mb-4">
+      <h6 class="mb-1 fw-semibold"><i class="bi bi-file-earmark-excel me-2 text-success"></i>Importar via Excel</h6>
+      <p class="text-muted mb-3" style="font-size:.82rem">Colunas <code>nome</code> e <code>cnpj</code>.</p>
+      <form id="form-buscar">
+        {% csrf_token %}
+        <div class="input-group">
+          <input type="file" class="form-control form-control-sm" name="arquivo" accept=".xlsx,.xls" required>
+          <button type="submit" class="btn btn-success btn-sm" id="btn-buscar">
+            <i class="bi bi-upload"></i>
+          </button>
+        </div>
+      </form>
+      <div id="status-buscar" class="mt-2" style="font-size:.82rem"></div>
+    </div>
+
+    <!-- CNPJ avulso -->
+    <div class="card p-4 mb-4">
+      <h6 class="mb-1 fw-semibold"><i class="bi bi-plus-circle me-2 text-primary"></i>Adicionar por CNPJ</h6>
+      <p class="text-muted mb-3" style="font-size:.82rem">Busca um ativo pelo CNPJ no Quantum.</p>
+      <form id="form-cnpj">
+        {% csrf_token %}
+        <div class="input-group">
+          <input type="text" class="form-control form-control-sm font-monospace"
+            name="cnpj" placeholder="00.000.000/0000-00" maxlength="20" required>
+          <button type="submit" class="btn btn-primary btn-sm" id="btn-cnpj">
+            <i class="bi bi-search"></i>
+          </button>
+        </div>
+      </form>
+      <div id="status-cnpj" class="mt-2" style="font-size:.82rem"></div>
+    </div>
+
+    <!-- Scrap -->
+    <div class="card p-4">
+      <h6 class="mb-1 fw-semibold"><i class="bi bi-cloud-download me-2 text-secondary"></i>Scrap de Cotas</h6>
+      <p class="text-muted mb-3" style="font-size:.82rem">
+        Selecione os ativos e o período. CDI e outros índices são coletados automaticamente.
+      </p>
+      <form id="form-scrap">
+        {% csrf_token %}
+
+        <!-- Lista de ativos -->
+        {% if ativos_lista %}
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="small fw-semibold">Ativos</span>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-link btn-sm p-0" id="btn-sel-todos">todos</button>
+              <button type="button" class="btn btn-link btn-sm p-0" id="btn-des-todos">nenhum</button>
+            </div>
+          </div>
+          <input type="text" class="form-control form-control-sm mb-1" id="filtro-scrap"
+            placeholder="Filtrar ativos…" autocomplete="off">
+          <div class="border rounded p-2" style="max-height:220px;overflow-y:auto;background:#f8f9fa">
+            {% for aq in ativos_lista %}
+            <div class="form-check">
+              <input class="form-check-input ativo-check" type="checkbox"
+                name="ativo_ids" value="{{ aq.id }}" id="ck_{{ aq.id }}">
+              <label class="form-check-label small" for="ck_{{ aq.id }}">
+                {{ aq.ativo.nome }}
+                <span class="text-muted" style="font-size:.75rem">· {{ aq.tipo }}</span>
+              </label>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div class="alert alert-light text-muted small mb-3 py-2">
+          Nenhum ativo importado ainda. Importe via Excel ou CNPJ acima.
+        </div>
+        {% endif %}
+
+        <!-- Datas -->
+        <div class="row g-2 mb-3">
+          <div class="col">
+            <label class="form-label small fw-semibold mb-1">Início</label>
+            <input type="date" class="form-control form-control-sm" name="data_inicio" required>
+          </div>
+          <div class="col">
+            <label class="form-label small fw-semibold mb-1">Fim</label>
+            <input type="date" class="form-control form-control-sm" name="data_fim" required>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-secondary w-100" id="btn-scrap"
+          {% if not ativos_lista %}disabled{% endif %}>
+          <i class="bi bi-play-fill me-1"></i>Iniciar Scrap
+        </button>
+      </form>
+      <div id="status-scrap" class="mt-3" style="font-size:.82rem"></div>
+    </div>
+
+  </div><!-- /col-esquerda -->
+
+  <!-- ── Jobs recentes ── -->
+  <div class="col-xl-8">
+    <div class="card p-4 h-100">
+      <h6 class="mb-3 fw-semibold"><i class="bi bi-clock-history me-2"></i>Jobs Recentes</h6>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-dark">
+            <tr><th>#</th><th>Tipo</th><th>Status</th><th>Detalhe</th><th>Início</th></tr>
+          </thead>
+          <tbody>
+            {% for job in jobs %}
+            <tr>
+              <td class="text-muted">{{ job.id }}</td>
+              <td>{{ job.get_tipo_display }}</td>
+              <td><span class="badge badge-{{ job.status }}">{{ job.get_status_display }}</span></td>
+              <td class="small">
+                {{ job.detalhe }}
+                {% if job.erro %}<div class="text-danger">{{ job.erro }}</div>{% endif %}
+              </td>
+              <td class="small text-muted">{{ job.criado_em|date:"d/m H:i" }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="text-center text-muted py-3">Nenhum job ainda.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Filtro de texto no scrap
+document.getElementById('filtro-scrap')?.addEventListener('input', function () {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('#form-scrap .form-check').forEach(row => {
+    row.style.display = row.querySelector('label').textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+// Selecionar / desselecionar todos (respeita filtro)
+document.getElementById('btn-sel-todos')?.addEventListener('click', () => {
+  document.querySelectorAll('.ativo-check').forEach(c => {
+    if (c.closest('.form-check').style.display !== 'none') c.checked = true;
+  });
+});
+document.getElementById('btn-des-todos')?.addEventListener('click', () => {
+  document.querySelectorAll('.ativo-check').forEach(c => c.checked = false);
+});
+
+function badge(status) {
+  const labels = { running: 'Em execução', done: 'Concluído', error: 'Erro' };
+  return `<span class="badge badge-${status}">${labels[status] || status}</span>`;
+}
+
+function pollJob(jobId, el, btn) {
+  const timer = setInterval(async () => {
+    const data = await fetch(`/jobs/${jobId}/`).then(r => r.json());
+    el.innerHTML = badge(data.status) + ' ' + data.detalhe +
+      (data.erro ? `<div class="text-danger">${data.erro}</div>` : '');
+    if (data.status !== 'running') {
+      clearInterval(timer);
+      btn.disabled = false;
+      if (data.status === 'done') location.reload();
+    }
+  }, 2000);
+}
+
+function bindForm(formId, url, statusId, btnId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = document.getElementById(btnId);
+    const el  = document.getElementById(statusId);
+    btn.disabled = true;
+    el.innerHTML = badge('running') + ' Aguardando...';
+
+    const data = await fetch(url, { method: 'POST', body: new FormData(form) }).then(r => r.json());
+    if (data.erro) {
+      el.innerHTML = badge('error') + ' ' + data.erro;
+      btn.disabled = false;
+      return;
+    }
+    pollJob(data.job_id, el, btn);
+  });
+}
+
+bindForm('form-buscar', '/buscar/',         'status-buscar', 'btn-buscar');
+bindForm('form-cnpj',   '/adicionar-cnpj/', 'status-cnpj',   'btn-cnpj');
+bindForm('form-scrap',  '/scrap/',          'status-scrap',  'btn-scrap');
+</script>
+{% endblock %}
