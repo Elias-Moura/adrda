@@ -1,0 +1,116 @@
+"""Camada de orquestração: client (HTTP) + parsers (pydantic) + ORM.
+
+Única camada que toca o Django ORM e converte pydantic -> models.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+from django.db import transaction
+from loguru import logger
+
+from scrapper.models import Ativo, CotacaoDiaria
+from scrapper.quantum import parsers
+from scrapper.quantum.catalogo import INDICES, MEDIDAS_POR_TIPO, TipoAtivo
+from scrapper.quantum.client import QuantumClient
+from scrapper.quantum.schemas import AtivoQuantum as AtivoQuantumSchema
+from scrapper.quantum.schemas import ResultadoBusca
+
+
+class QuantumService:
+    """Orquestra busca/import/coleta. Login lazy na primeira chamada de rede."""
+
+    def __init__(self, client: QuantumClient | None = None) -> None:
+        self._client = client or QuantumClient()
+        self._logged_in = False
+
+    def _ensure_login(self) -> None:
+        if not self._logged_in:
+            self._client.login()
+            self._logged_in = True
+
+    # ── Busca ───────────────────────────────────────────────────────────────
+    def buscar_por_texto(self, termo: str) -> list[ResultadoBusca]:
+        self._ensure_login()
+        return parsers.parse_resultados_busca(self._client.buscar(termo, is_cnpj=False))
+
+    def buscar_por_cnpj(self, cnpj: str) -> list[ResultadoBusca]:
+        self._ensure_login()
+        return parsers.parse_resultados_busca(self._client.buscar(cnpj, is_cnpj=True))
+
+    # ── Import (rede -> pydantic -> ORM) ──────────────────────────────────────
+    def importar_ativos(self, resultados: list[ResultadoBusca]) -> list[Ativo]:
+        """Para cada resultado: busca metadados (quando o tipo os tem), monta o
+        domínio e persiste. Idempotente via chave natural (tipo, id_quantum)."""
+        self._ensure_login()
+        ativos: list[Ativo] = []
+        for resultado in resultados:
+            if MEDIDAS_POR_TIPO.get(resultado.tipo):
+                raw = self._client.dados_complementares(resultado.tipo, resultado.id_quantum)
+            else:
+                # INDICE/RENDA_FIXA não têm card de medidas: evita POST inútil.
+                raw = {}
+            meta = parsers.parse_metadados(resultado.tipo, raw)
+            aq = parsers.montar_ativo(resultado, meta)
+            ativos.append(self._persistir(aq))
+        return ativos
+
+    @transaction.atomic
+    def _persistir(self, aq: AtivoQuantumSchema) -> Ativo:
+        ativo, _ = Ativo.objects.update_or_create(
+            tipo=aq.tipo.value,
+            id_quantum=aq.id_quantum,
+            defaults={
+                "nome": aq.nome,
+                "subtipo": aq.subtipo or "",
+                "cnpj": aq.cnpj or "",
+                "ticker": aq.ticker or "",
+                "setor": aq.setor or "",
+                "gestora": aq.gestora or "",
+                "primeira_cota": aq.primeira_cota,
+                "metadados": aq.metadados.model_dump(),
+            },
+        )
+        return ativo
+
+    # ── Cotas ─────────────────────────────────────────────────────────────────
+    def coletar_serie(self, ativo: Ativo, data_inicio: date, data_fim: date) -> int:
+        """Coleta a série diária do ativo e faz upsert em CotacaoDiaria."""
+        self._ensure_login()
+        di = ativo.primeira_cota if (ativo.primeira_cota and ativo.primeira_cota > data_inicio) else data_inicio
+        raw = self._client.serie(TipoAtivo(ativo.tipo), ativo.id_quantum, di, data_fim)
+        serie = parsers.parse_serie(raw)
+        if not serie.pontos:
+            return 0
+        objs = [
+            CotacaoDiaria(ativo=ativo, data=p.data, valor=p.valor)
+            for p in serie.pontos
+        ]
+        CotacaoDiaria.objects.bulk_create(
+            objs,
+            update_conflicts=True,
+            unique_fields=["ativo", "data"],
+            update_fields=["valor"],
+        )
+        return len(objs)
+
+    def coletar_indices(self, data_inicio: date, data_fim: date) -> int:
+        """Coleta a série de todos os índices semeados."""
+        total = 0
+        for indice in Ativo.objects.filter(tipo=TipoAtivo.INDICE):
+            try:
+                total += self.coletar_serie(indice, data_inicio, data_fim)
+            except Exception as exc:  # índice indisponível não derruba o lote
+                logger.warning(f"Falha ao coletar índice {indice.nome}: {exc}")
+        return total
+
+
+@transaction.atomic
+def seed_indices() -> None:
+    """Cria/atualiza os Ativos do tipo INDICE a partir de quantum.catalogo."""
+    for id_quantum, nome in INDICES.items():
+        Ativo.objects.update_or_create(
+            tipo=TipoAtivo.INDICE.value,
+            id_quantum=id_quantum,
+            defaults={"nome": nome},
+        )
