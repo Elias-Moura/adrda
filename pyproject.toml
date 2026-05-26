@@ -15,13 +15,23 @@ dependencies = [
     "quantstats>=0.0.62",
     "plotly>=5.22",
     "numpy>=1.26",
+    "pydantic>=2.7",
+    "taskipy>=1.14.1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-django>=4.8",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+DJANGO_SETTINGS_MODULE = "core.settings"
+python_files = ["test_*.py"]
+
+[tool.taskipy.tasks]
+migrate = { cmd = "python manage.py migrate", help = "Aplica as migrações pendentes no banco de dados" }
+run = { cmd = "task migrate && python manage.py runserver", help = "Roda as migrações e sobe o servidor de desenvolvimento Django" }
+pull = { cmd = "git checkout main && git pull origin main", help = "Atualiza o repositório local com a branch main remota" }
