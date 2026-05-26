@@ -104,8 +104,9 @@ temp/
 relatorios/
 exports/
 
-# Plotly / quantstats
+# Plotly / quantstats (templates do Django são preservados)
 *.html
+!**/templates/**/*.html
 
 # Credenciais e cookies
 cookies.json
