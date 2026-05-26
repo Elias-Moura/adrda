@@ -1,58 +1,53 @@
 from django.db import models
 
+from scrapper.quantum.catalogo import TipoAtivo
+
 
 class Ativo(models.Model):
+    """Ativo unificado do Quantum. Chave natural: (tipo, id_quantum)."""
+
+    TIPO_CHOICES = [(t.value, t.value) for t in TipoAtivo]
+
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    id_quantum = models.CharField(max_length=100)  # string (cobre RENDA_FIXA)
+    subtipo = models.CharField(max_length=50, blank=True, default="")
     nome = models.CharField(max_length=200)
-    # Blank/empty para índices (CDI, IBOV…) que não têm CNPJ
-    cnpj = models.CharField(max_length=20, blank=True, default="")
+    # Colunas promovidas (consultáveis/indexadas)
+    # cnpj é indexado mas não-único: a unicidade é garantida pela chave natural
+    # (tipo, id_quantum), e o mesmo CNPJ pode aparecer sob tipos distintos.
+    cnpj = models.CharField(max_length=20, blank=True, default="", db_index=True)
+    ticker = models.CharField(max_length=20, blank=True, default="", db_index=True)
+    setor = models.CharField(max_length=120, blank=True, default="")
+    gestora = models.CharField(max_length=200, blank=True, default="")
+    primeira_cota = models.DateField(null=True, blank=True)
+    # Resto dos metadados (já validado por pydantic; meta.model_dump())
+    metadados = models.JSONField(default=dict)
     criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["nome"]
         verbose_name = "Ativo"
         verbose_name_plural = "Ativos"
         constraints = [
-            # Unicidade só quando cnpj não for vazio
             models.UniqueConstraint(
-                condition=models.Q(cnpj__gt=""),
-                fields=["cnpj"],
-                name="ativo_unique_cnpj_nonempty",
+                fields=["tipo", "id_quantum"], name="ativo_natural_key"
             )
         ]
 
     def __str__(self):
-        return f"{self.nome} ({self.cnpj})" if self.cnpj else self.nome
-
-
-class AtivoQuantum(models.Model):
-    ativo = models.OneToOneField(
-        Ativo, on_delete=models.CASCADE, related_name="quantum"
-    )
-    id_quantum = models.CharField(max_length=100)
-    # Ex.: FUNDO, PORTFOLIO, ACAO, INDICE
-    tipo = models.CharField(max_length=50, blank=True)
-    primeira_cota = models.DateField(null=True, blank=True)
-    gestora = models.CharField(max_length=200, blank=True)
-    dados_complementares = models.JSONField(default=dict)
-    atualizado_em = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Ativo Quantum"
-        verbose_name_plural = "Ativos Quantum"
-
-    def __str__(self):
-        return f"{self.ativo.nome} (ID: {self.id_quantum})"
+        return f"{self.nome} ({self.tipo})"
 
     @property
-    def is_indice(self):
-        return self.tipo == "INDICE"
+    def is_indice(self) -> bool:
+        return self.tipo == TipoAtivo.INDICE
 
 
 class CotacaoDiaria(models.Model):
-    """Série de valor base-100 por ativo/índice e data."""
+    """Série de valor base-100 por ativo e data."""
 
     ativo = models.ForeignKey(
-        AtivoQuantum, on_delete=models.CASCADE, related_name="cotacoes"
+        Ativo, on_delete=models.CASCADE, related_name="cotacoes"
     )
     data = models.DateField(db_index=True)
     valor = models.FloatField()
@@ -64,7 +59,7 @@ class CotacaoDiaria(models.Model):
         verbose_name_plural = "Cotações Diárias"
 
     def __str__(self):
-        return f"{self.ativo.ativo.nome} {self.data}: {self.valor:.4f}"
+        return f"{self.ativo.nome} {self.data}: {self.valor:.4f}"
 
 
 class Job(models.Model):
