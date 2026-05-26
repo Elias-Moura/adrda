@@ -29,14 +29,14 @@
         <tr>
           <td class="fw-semibold">{{ ativo.nome }}</td>
           <td class="text-muted font-monospace small">{{ ativo.cnpj }}</td>
-          {% if ativo.quantum %}
-            <td class="font-monospace small">{{ ativo.quantum.id_quantum }}</td>
-            <td><span class="badge bg-secondary">{{ ativo.quantum.tipo }}</span></td>
-            <td class="small">{{ ativo.quantum.gestora|default:"—" }}</td>
+          {% if ativo.id_quantum %}
+            <td class="font-monospace small">{{ ativo.id_quantum }}</td>
+            <td><span class="badge bg-secondary">{{ ativo.tipo }}</span></td>
+            <td class="small">{{ ativo.gestora|default:"—" }}</td>
             <td class="small text-muted">
-              {% if ativo.quantum.primeira_cota %}{{ ativo.quantum.primeira_cota|date:"d/m/Y" }}{% else %}—{% endif %}
+              {% if ativo.primeira_cota %}{{ ativo.primeira_cota|date:"d/m/Y" }}{% else %}—{% endif %}
             </td>
-            <td class="small text-muted">{{ ativo.quantum.atualizado_em|date:"d/m/Y H:i" }}</td>
+            <td class="small text-muted">{{ ativo.atualizado_em|date:"d/m/Y H:i" }}</td>
           {% else %}
             <td colspan="5" class="text-muted small">Sem dados Quantum</td>
           {% endif %}
