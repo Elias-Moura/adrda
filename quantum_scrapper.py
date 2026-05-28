@@ -50,6 +50,23 @@ class AtivoQuantum:
         return data_inicio_desejada
 
 
+@dataclass
+class ResultadoBusca:
+    """
+    Um candidato retornado pela busca global do Quantum (pesquisa por texto).
+
+    Espelha o `itemSelecionavel` da resposta de /buscaGlobal/ajax/buscar.
+    `tipo` (tipoItemSelecionavel: FI, FII, ACAO, ...) é o mesmo valor usado nas
+    chamadas a /api/ativos/{tipo}/{id_quantum}/...
+    """
+    label: str
+    tipo: str
+    id_quantum: int
+    informacao_adicional: str = ""
+    cnpj: Optional[str] = None
+    codigo_grupo: int = 0
+
+
 class _RateLimiter:
     """
     Token bucket para trio.
@@ -275,7 +292,96 @@ class QuantumScrapper:
             raise ValueError(f'{response.status_code=} {response.text}')
         return self._decode_json(response)
 
+    def _build_url_busca_texto(self, termo: str, max_por_grupo: int = 5) -> str:
+        """
+        Monta a URL da busca global por texto livre (nome ou ticker).
+
+        Replica exatamente os parâmetros enviados pela pesquisa interativa da
+        interface ("Search assets"): mesmo endpoint de `req_cnpj`, porém com
+        `isCNPJ=false` e os filtros de agrupamento.
+        """
+        import time
+        return (
+            f"{self._BASE_URL}/webaxis/webaxis2/buscaGlobal/ajax/buscar"
+            f"?filtroBusca=defaultSearch"
+            f"&searchString={urllib.parse.quote(termo)}"
+            f"&cancelaBusca=false"
+            f"&isCNPJ=false"
+            f"&isCodigoSUSEP=false"
+            f"&codigoGrupoExpandido="
+            f"&quantidadeMaximaPorGrupo={max_por_grupo}"
+            f"&_={int(time.time() * 1000)}"
+        )
+
+    @staticmethod
+    def _parsear_resultados_busca(grupos: list[dict]) -> list[ResultadoBusca]:
+        """
+        Achata o JSON agrupado da busca global numa lista de ResultadoBusca.
+
+        A resposta vem agrupada por tipo de ativo (cada `codigoGrupo` é um grupo);
+        uma mesma pesquisa pode retornar vários grupos (ex.: HASH11 devolve o
+        fundo de índice e o ETF). O CNPJ é extraído de `informacaoAdicional`
+        quando presente (fundos vêm como 'CNPJ: 00.000.000/0000-00 | ...').
+        """
+        import re
+        resultados: list[ResultadoBusca] = []
+        for grupo in grupos:
+            for entrada in grupo.get("primeirosResultados", []):
+                item = entrada.get("itemSelecionavel", {})
+                info = entrada.get("informacaoAdicional", "") or ""
+                cnpj_match = re.search(r"CNPJ:\s*([\d./-]+)", info)
+                resultados.append(ResultadoBusca(
+                    label=item.get("label", ""),
+                    tipo=item.get("tipoItemSelecionavel", ""),
+                    id_quantum=int(item["identificador"]),
+                    informacao_adicional=info,
+                    cnpj=cnpj_match.group(1) if cnpj_match else None,
+                    codigo_grupo=grupo.get("codigoGrupo", 0),
+                ))
+        return resultados
+
+    def buscar_ativos(self, termo: str, max_por_grupo: int = 5) -> list[ResultadoBusca]:
+        """
+        Pesquisa ativos por texto livre (nome ou ticker) na busca global do Quantum.
+
+        Reproduz a pesquisa interativa da interface. Diferente de `req_cnpj`, o
+        resultado pode conter vários grupos/tipos de ativo; este método devolve
+        todos os candidatos achatados numa única lista.
+        """
+        logger.debug(f"Buscando ativos por texto: {termo=}")
+        url = self._build_url_busca_texto(termo, max_por_grupo)
+        headers = {
+            **self._headers_api(),
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": f"{self._BASE_URL}/webaxis/",
+        }
+
+        response = self._client.get(url, headers=headers)
+
+        logger.debug(f"Resposta da busca por texto {response.status_code}")
+        if response.status_code != 200:
+            raise ValueError(f"{response.status_code=} {response.text}")
+        return self._parsear_resultados_busca(self._decode_json(response))
+
     # ── Métodos async (usados por trabalha_novos_ativos) ─────────────────────
+
+    async def _buscar_ativos_async(
+        self, termo: str, client: httpx.AsyncClient, max_por_grupo: int = 5
+    ) -> list[ResultadoBusca]:
+        """Variante async de `buscar_ativos` (mesma assinatura de resultado)."""
+        url = self._build_url_busca_texto(termo, max_por_grupo)
+        headers = {
+            **self._headers_api(),
+            "accept": "application/json, text/javascript, */*; q=0.01",
+            "content-type": "application/x-www-form-urlencoded",
+            "referer": f"{self._BASE_URL}/webaxis/",
+        }
+        response = await client.get(url, headers=headers)
+        if response.status_code != 200:
+            raise ValueError(f"{response.status_code=} {response.text}")
+        return self._parsear_resultados_busca(self._decode_json(response))
+
 
     async def _req_cnpj_async(self, cnpj: str, client: httpx.AsyncClient) -> dict:
         url = (
