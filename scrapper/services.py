@@ -129,7 +129,8 @@ class QuantumService:
 
     # ── Cotas ─────────────────────────────────────────────────────────────────
     def coletar_serie(self, ativo: Ativo, data_inicio: date, data_fim: date) -> int:
-        """Coleta a série diária do ativo e faz upsert em CotacaoDiaria."""
+        """Coleta a série diária do ativo, faz upsert de `valor` (Decimal) e
+        recomputa os retornos da série inteira."""
         self._ensure_login()
         di = ativo.primeira_cota if (ativo.primeira_cota and ativo.primeira_cota > data_inicio) else data_inicio
         raw = self._client.serie(TipoAtivo(ativo.tipo), ativo.id_quantum, di, data_fim)
@@ -137,15 +138,17 @@ class QuantumService:
         if not serie.pontos:
             return 0
         objs = [
-            CotacaoDiaria(ativo=ativo, data=p.data, valor=p.valor)
+            CotacaoDiaria(ativo=ativo, data=p.data, valor=Decimal(str(p.valor)))
             for p in serie.pontos
         ]
-        CotacaoDiaria.objects.bulk_create(
-            objs,
-            update_conflicts=True,
-            unique_fields=["ativo", "data"],
-            update_fields=["valor"],
-        )
+        with transaction.atomic():
+            CotacaoDiaria.objects.bulk_create(
+                objs,
+                update_conflicts=True,
+                unique_fields=["ativo", "data"],
+                update_fields=["valor"],
+            )
+            recalcular_retornos(ativo)
         return len(objs)
 
     def coletar_carteira(self, ativo: Ativo, competencia: date | None = None) -> CarteiraFundo:

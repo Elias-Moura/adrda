@@ -148,6 +148,20 @@ class TestColetarSerie:
         di_chamado = client.serie.call_args[0][2]
         assert di_chamado == date(2024, 1, 1)
 
+    def test_persiste_decimal_e_calcula_retornos(self):
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([
+            ("2024-01-02", "100.0"), ("2024-01-03", "110.0"),
+        ])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="9", nome="Z")
+        svc.coletar_serie(ativo, date(2024, 1, 1), date(2024, 12, 31))
+        cotas = list(ativo.cotacoes.order_by("data"))
+        assert isinstance(cotas[0].valor, Decimal)
+        assert cotas[0].retorno == Decimal("0")
+        assert cotas[1].retorno == Decimal("0.1")
+
 
 @pytest.mark.django_db
 class TestColetarCarteira:
