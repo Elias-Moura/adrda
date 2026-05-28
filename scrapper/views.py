@@ -7,7 +7,7 @@ from datetime import date as date_type
 import numpy as np
 import pandas as pd
 from django.db import close_old_connections
-from django.db.models import Count, Max, Min
+from django.db.models import Count, Max
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -115,15 +115,10 @@ def ativos_list(request):
 def detalhe_ativo(request, ativo_id):
     ativo = get_object_or_404(Ativo, id=ativo_id)
 
-    agg = CotacaoDiaria.objects.filter(ativo=ativo).aggregate(
-        num=Count("id"), primeira=Min("data"), ultima=Max("data")
-    )
-    valor_atual = (
-        CotacaoDiaria.objects.filter(ativo=ativo).order_by("-data")
-        .values_list("valor", flat=True).first()
-    )
-
+    # A série já materializa toda a cotação ordenada; derivamos as estatísticas
+    # dela em vez de disparar consultas agregadas adicionais.
     serie = _serie_completa(ativo)
+    tem_cotas = not serie.empty
     from .analise import gerar_grafico_ativo_html
     grafico_html = gerar_grafico_ativo_html(ativo.nome, serie)
 
@@ -134,10 +129,10 @@ def detalhe_ativo(request, ativo_id):
 
     return render(request, "scrapper/detalhe.html", {
         "ativo": ativo,
-        "num_cotas": agg["num"],
-        "primeira_cotacao": agg["primeira"],
-        "ultima_cotacao": agg["ultima"],
-        "valor_atual": valor_atual,
+        "num_cotas": len(serie),
+        "primeira_cotacao": serie.index[0].date() if tem_cotas else None,
+        "ultima_cotacao": serie.index[-1].date() if tem_cotas else None,
+        "valor_atual": serie.iloc[-1] if tem_cotas else None,
         "grafico_html": grafico_html,
         "pode_ter_carteira": ativo.tipo == TipoAtivo.FI,
         "carteira": carteira,
