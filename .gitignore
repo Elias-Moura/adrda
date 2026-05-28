@@ -117,3 +117,4 @@ credentials.json
 
 # Claude / agentes
 .claude/
+.playwright-mcp/
