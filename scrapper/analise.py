@@ -526,3 +526,27 @@ def gerar_relatorio_html(
 </footer>
 </body>
 </html>"""
+
+
+def gerar_grafico_ativo_html(nome: str, serie) -> str:
+    """Figura Plotly da evolução base-100 de um único ativo.
+
+    Devolve um fragmento HTML (div) sem a lib Plotly embutida — a página inclui
+    o Plotly via CDN. Série vazia -> string vazia (o template mostra um aviso).
+    """
+    if serie is None or len(serie) == 0:
+        return ""
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=list(serie.index), y=list(serie.values), name=nome,
+        line=dict(color="#0d6efd", width=2.5),
+        hovertemplate="%{x|%d/%m/%Y}<br>%{y:.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=420, margin=dict(l=10, r=10, t=10, b=10),
+        xaxis_title="Data", yaxis_title="Valor (Base 100)",
+        plot_bgcolor="#f8f9fa", paper_bgcolor="white", showlegend=False,
+    )
+    return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
