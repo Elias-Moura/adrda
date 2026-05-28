@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from decimal import Decimal, localcontext
 
 from django.db import transaction
 from loguru import logger
@@ -24,6 +25,26 @@ def parece_cnpj(termo: str) -> bool:
     if any(c.isalpha() for c in termo):
         return False
     return len(re.sub(r"\D", "", termo)) == 14
+
+
+def calcular_retornos_serie(valores: list[Decimal]) -> list[tuple[Decimal, Decimal]]:
+    """Retornos diários (simples e log) de uma série ordenada de valores.
+
+    Função pura (sem ORM/rede). O primeiro ponto e qualquer ponto cujo anterior
+    seja zero recebem (0, 0). Usa contexto Decimal de alta precisão para o ln.
+    """
+    resultado: list[tuple[Decimal, Decimal]] = []
+    anterior: Decimal | None = None
+    with localcontext() as ctx:
+        ctx.prec = 50
+        for valor in valores:
+            if anterior is None or anterior == 0:
+                resultado.append((Decimal(0), Decimal(0)))
+            else:
+                razao = valor / anterior
+                resultado.append((razao - 1, razao.ln()))
+            anterior = valor
+    return resultado
 
 
 class QuantumService:

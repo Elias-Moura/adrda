@@ -1,12 +1,13 @@
 import json
 from datetime import date
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
 
 from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria
 from scrapper.quantum.catalogo import TipoAtivo
-from scrapper.services import QuantumService, parece_cnpj, seed_indices
+from scrapper.services import QuantumService, calcular_retornos_serie, parece_cnpj, seed_indices
 
 
 def _multiplex_valor(valores: list) -> dict:
@@ -42,6 +43,27 @@ _FI_24 = [
     "D+0", "D+0", "D+0", "Tx: 0%", "2021-09-10", "0.00", "D",
     "Não informado", "Não possui", "FI_LONGO_PRAZO", "true",
 ]
+
+
+class TestCalcularRetornosSerie:
+    def test_serie_vazia(self):
+        assert calcular_retornos_serie([]) == []
+
+    def test_primeiro_ponto_zero(self):
+        r = calcular_retornos_serie([Decimal("100")])
+        assert r == [(Decimal(0), Decimal(0))]
+
+    def test_retorno_simples_e_log(self):
+        r = calcular_retornos_serie([Decimal("100"), Decimal("110")])
+        assert r[0] == (Decimal(0), Decimal(0))
+        retorno, retorno_ln = r[1]
+        assert retorno == Decimal("0.1")  # 110/100 - 1
+        # ln(1.1) ≈ 0.0953101798...
+        assert abs(retorno_ln - Decimal("0.09531017980432486")) < Decimal("1e-15")
+
+    def test_valor_anterior_zero_nao_quebra(self):
+        r = calcular_retornos_serie([Decimal("0"), Decimal("100")])
+        assert r == [(Decimal(0), Decimal(0)), (Decimal(0), Decimal(0))]
 
 
 @pytest.mark.django_db
