@@ -396,3 +396,17 @@ class TestAtualizarCarteira:
         job = Job.objects.get(id=resp.json()["job_id"])
         assert job.status == "error"
         assert "falha de rede" in job.erro
+
+
+@pytest.mark.django_db
+class TestSerieFloat:
+    def test_serie_completa_dtype_float(self):
+        from decimal import Decimal
+        import numpy as np
+        from scrapper.models import CotacaoDiaria
+        from scrapper.views import _serie_completa
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        CotacaoDiaria.objects.create(ativo=ativo, data="2024-01-02", valor=Decimal("100.5"))
+        serie = _serie_completa(ativo)
+        assert serie.dtype == np.float64
+        assert serie.iloc[0] == 100.5

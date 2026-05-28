@@ -30,7 +30,7 @@ def _serie_do_banco_range(ativo: Ativo, di, df) -> pd.Series:
     )
     if not cotacoes:
         return pd.Series(dtype=float)
-    return pd.Series({pd.Timestamp(d): v for d, v in cotacoes}, name=ativo.nome)
+    return pd.Series({pd.Timestamp(d): float(v) for d, v in cotacoes}, name=ativo.nome)
 
 
 def _serie_completa(ativo: Ativo) -> pd.Series:
@@ -40,7 +40,7 @@ def _serie_completa(ativo: Ativo) -> pd.Series:
     )
     if not pts:
         return pd.Series(dtype=float)
-    return pd.Series({pd.Timestamp(d): v for d, v in pts}, name=ativo.nome)
+    return pd.Series({pd.Timestamp(d): float(v) for d, v in pts}, name=ativo.nome)
 
 
 def _carregar_termos_excel(filepath: str) -> list[tuple[str, bool]]:
@@ -583,7 +583,7 @@ def exportar_cotas_excel(request):
             .order_by("data")
         )
         if pts:
-            cotas[ativo.nome] = pd.Series({pd.Timestamp(d): v for d, v in pts})
+            cotas[ativo.nome] = pd.Series({pd.Timestamp(d): float(v) for d, v in pts})
 
     if not cotas:
         return HttpResponse("Nenhuma cotação encontrada para os ativos selecionados.", status=404)
