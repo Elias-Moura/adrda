@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+from django.db import IntegrityError
 
 from scrapper.models import Ativo, CarteiraFundo, PosicaoCarteira
 
@@ -13,7 +14,6 @@ class TestCarteiraFundo:
     def test_unique_ativo_competencia(self):
         ativo = self._ativo()
         CarteiraFundo.objects.create(ativo=ativo, competencia=date(2026, 4, 1))
-        from django.db import IntegrityError
         with pytest.raises(IntegrityError):
             CarteiraFundo.objects.create(ativo=ativo, competencia=date(2026, 4, 1))
 
