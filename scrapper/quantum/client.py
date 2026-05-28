@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.parse
 from datetime import date
@@ -19,6 +20,10 @@ from loguru import logger
 from .catalogo import MEDIDAS_POR_TIPO, TipoAtivo
 
 load_dotenv()
+
+
+# chave (UUID) que prende o estado da sessão no relatório .qt (handshake de transporte).
+_QT_CHAVE_RE = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
 
 class QuantumClient:
@@ -170,6 +175,69 @@ class QuantumClient:
         if response.status_code != 200:
             raise ValueError(f"{response.status_code=} {response.text}")
         return self._decode_json(response)
+
+    # ── Carteira investida (relatório .qt; HTML cru) ────────────────────────────
+    def _headers_qt(self, ref_sufixo: str = "") -> dict[str, str]:
+        return {
+            "referer": f"{self._BASE_URL}/webaxis/{ref_sufixo}",
+            "accept-language": "pt-BR,pt;q=0.9",
+            "x-requested-with": "XMLHttpRequest",
+        }
+
+    def abrir_carteira_fundo(self, id_quantum: str) -> str:
+        """Abre carteiraFundo.qt e devolve o HTML da competência mais recente.
+
+        Fluxo: GET wait.jsp (acessoDireto, prepara o estado) → POST carteiraFundo.qt
+        (o auto-submit que o navegador faz). O HTML traz o <select> de competências,
+        as posições (nome/valor/participação), as agregações e a `chave` de sessão.
+        Disponível apenas para fundos (FI); BDR/ação retornam erro do servidor.
+        """
+        base = self._BASE_URL
+        self._client.get(
+            f"{base}/webaxis/wait.jsp?codigo={id_quantum}&mostrarProgresso=true"
+            f"&gotopage=carteiraFundo.qt&acao=acessoDireto&esconderBotaoVoltar=true",
+            headers=self._headers_qt(),
+        )
+        resp = self._client.post(
+            f"{base}/webaxis/carteiraFundo.qt",
+            data={
+                "codigo": id_quantum, "gotopage": "carteiraFundo.qt",
+                "acao": "acessoDireto", "esconderBotaoVoltar": "true",
+            },
+            headers=self._headers_qt("wait.jsp"),
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"carteiraFundo.qt acessoDireto {resp.status_code}")
+        return resp.text
+
+    def trocar_competencia_carteira(self, chave: str, competencia_mmddyyyy: str) -> str:
+        """Troca a competência exibida e devolve o HTML novo.
+
+        `chave` é o UUID extraído do HTML atual. O GET alterarData devolve uma
+        página de espera que carrega uma `chave` renovada; é com ela que o POST
+        final é feito (o HTML resultante traz, por sua vez, a chave do próximo passo).
+        """
+        base = self._BASE_URL
+        wait = self._client.get(
+            f"{base}/webaxis/wait.jsp?gotopage=carteiraFundo.qt&acao=alterarData"
+            f"&data={competencia_mmddyyyy}&chave={chave}&ocultarAtivosSemParticipacao=false",
+            headers=self._headers_qt("carteiraFundo.qt"),
+        ).text
+        m = _QT_CHAVE_RE.search(wait)
+        if not m:
+            raise ValueError("chave renovada não encontrada ao trocar competência.")
+        resp = self._client.post(
+            f"{base}/webaxis/carteiraFundo.qt",
+            data={
+                "gotopage": "carteiraFundo.qt", "acao": "alterarData",
+                "data": competencia_mmddyyyy, "chave": m.group(0),
+                "ocultarAtivosSemParticipacao": "false",
+            },
+            headers=self._headers_qt("wait.jsp"),
+        )
+        if resp.status_code != 200:
+            raise ValueError(f"carteiraFundo.qt alterarData {resp.status_code}")
+        return resp.text
 
     def serie(
         self, tipo: TipoAtivo, id_quantum: str, data_inicio: date, data_fim: date,

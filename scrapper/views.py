@@ -122,10 +122,12 @@ def detalhe_ativo(request, ativo_id):
     from .analise import gerar_grafico_ativo_html
     grafico_html = gerar_grafico_ativo_html(ativo.nome, serie)
 
-    carteira = (
-        ativo.carteiras.prefetch_related("posicoes").first()
-        if ativo.tipo == TipoAtivo.FI else None
+    pode_ter_carteira = ativo.tipo == TipoAtivo.FI
+    competencias = (
+        list(ativo.carteiras.values_list("competencia", flat=True))
+        if pode_ter_carteira else []
     )
+    carteira = _carteira_selecionada(ativo, request.GET.get("competencia")) if competencias else None
 
     return render(request, "scrapper/detalhe.html", {
         "ativo": ativo,
@@ -134,30 +136,86 @@ def detalhe_ativo(request, ativo_id):
         "ultima_cotacao": serie.index[-1].date() if tem_cotas else None,
         "valor_atual": serie.iloc[-1] if tem_cotas else None,
         "grafico_html": grafico_html,
-        "pode_ter_carteira": ativo.tipo == TipoAtivo.FI,
+        "pode_ter_carteira": pode_ter_carteira,
+        "competencias": competencias,
         "carteira": carteira,
+        "agregacoes": _agregacoes_para_template(carteira),
     })
+
+
+# Rótulos amigáveis das dimensões de agregação da carteira (ordem de exibição).
+_DIMENSOES_CARTEIRA = [
+    ("tipo", "Tipo de ativo"),
+    ("setor", "Setor"),
+    ("risco", "Risco"),
+    ("classe", "Classe"),
+]
+
+
+def _carteira_selecionada(ativo: Ativo, competencia_str: str | None):
+    """Carteira da competência pedida (?competencia=AAAA-MM-DD); senão a mais recente."""
+    qs = ativo.carteiras.prefetch_related("posicoes")
+    if competencia_str:
+        try:
+            escolhida = qs.filter(
+                competencia=date_type.fromisoformat(competencia_str)
+            ).first()
+            if escolhida:
+                return escolhida
+        except ValueError:
+            pass
+    return qs.first()
+
+
+def _agregacoes_para_template(carteira) -> list[dict]:
+    """Lista ordenada de dimensões {chave, rotulo, itens:[{rotulo, pct}]} para os cards."""
+    if not carteira or not carteira.agregacoes:
+        return []
+    blocos = []
+    for chave, rotulo in _DIMENSOES_CARTEIRA:
+        itens = carteira.agregacoes.get(chave) or []
+        if itens:
+            blocos.append({
+                "chave": chave,
+                "rotulo": rotulo,
+                "itens": [{"rotulo": r, "pct": p} for r, p in itens],
+            })
+    return blocos
 
 
 @require_POST
 def atualizar_carteira(request, ativo_id):
-    """Coleta sob demanda a carteira do fundo (FI) e persiste. Síncrono."""
+    """Sincroniza todas as competências da carteira (FI) em job assíncrono.
+
+    São dezenas de competências (uma requisição .qt cada), então roda em thread e
+    a página acompanha pelo job. Incremental: já existentes são puladas.
+    """
     ativo = get_object_or_404(Ativo, id=ativo_id)
     if ativo.tipo != TipoAtivo.FI:
         return JsonResponse(
             {"erro": "Carteira disponível apenas para fundos (FI)."}, status=400
         )
-    try:
-        carteira = QuantumService().coletar_carteira(ativo)
-    except ValueError as exc:
-        return JsonResponse({"erro": str(exc)}, status=400)
-    except Exception as exc:
-        return JsonResponse({"erro": f"Falha ao coletar carteira: {exc}"}, status=502)
-    return JsonResponse({
-        "ok": True,
-        "competencia": carteira.competencia.isoformat(),
-        "posicoes": carteira.posicoes.count(),
-    })
+    forcar = request.POST.get("forcar") == "1"
+    job = Job.objects.create(tipo="carteira", detalhe=f"Carteira: {ativo.nome}")
+
+    def _run():
+        close_old_connections()
+        try:
+            competencias = QuantumService().sincronizar_carteiras(ativo, forcar=forcar)
+            job.status = "done"
+            job.detalhe = f"{len(competencias)} competência(s) · {ativo.nome}"
+            job.concluido_em = timezone.now()
+            job.save()
+        except Exception as exc:
+            job.status = "error"
+            job.erro = str(exc)
+            job.concluido_em = timezone.now()
+            job.save()
+        finally:
+            close_old_connections()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return JsonResponse({"job_id": job.id})
 
 
 @require_POST

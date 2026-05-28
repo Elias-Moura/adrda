@@ -8,6 +8,17 @@ from scrapper.quantum.schemas import ResultadoBusca
 from scrapper.views import _candidato_para_json, _resultado_de_request
 
 
+class _SyncThread:
+    """Thread fake que roda o target em linha — torna jobs assíncronos testáveis."""
+
+    def __init__(self, target=None, daemon=None, **kwargs):
+        self._target = target
+
+    def start(self):
+        if self._target:
+            self._target()
+
+
 class TestCandidatoParaJson:
     def test_fi_com_cnpj(self):
         r = ResultadoBusca(
@@ -238,6 +249,29 @@ class TestDetalheAtivo:
         assert ctx["carteira"].id == c.id
         assert ctx["carteira"].posicoes.count() == 1
 
+    def test_select_competencia_e_default_mais_recente(self, client):
+        a = Ativo.objects.create(tipo="FI", id_quantum="4", nome="Y")
+        antiga = CarteiraFundo.objects.create(ativo=a, competencia=date(2026, 3, 31))
+        recente = CarteiraFundo.objects.create(ativo=a, competencia=date(2026, 4, 30))
+        # sem querystring: mais recente
+        ctx = client.get(f"/ativos/{a.id}/").context
+        assert ctx["carteira"].id == recente.id
+        assert ctx["competencias"] == [date(2026, 4, 30), date(2026, 3, 31)]
+        # com ?competencia=: a escolhida
+        ctx2 = client.get(f"/ativos/{a.id}/?competencia=2026-03-31").context
+        assert ctx2["carteira"].id == antiga.id
+
+    def test_agregacoes_no_contexto(self, client):
+        a = Ativo.objects.create(tipo="FI", id_quantum="5", nome="Z")
+        CarteiraFundo.objects.create(
+            ativo=a, competencia=date(2026, 4, 30),
+            agregacoes={"tipo": [["Government Bonds", 51.43]], "setor": [["Banks", 38.07]]},
+        )
+        blocos = client.get(f"/ativos/{a.id}/").context["agregacoes"]
+        chaves = [b["chave"] for b in blocos]
+        assert chaves == ["tipo", "setor"]  # ordem fixa de exibição
+        assert blocos[0]["itens"][0] == {"rotulo": "Government Bonds", "pct": 51.43}
+
     def test_grafico_carrega_plotly_antes_de_plotar(self, client):
         # Regressão: a lib Plotly precisa carregar ANTES do Plotly.newPlot,
         # senão o gráfico não plota (newPlot roda antes do Plotly existir).
@@ -279,26 +313,35 @@ class TestAtualizarCarteira:
         resp = client.post(f"/ativos/{a.id}/carteira/atualizar/")
         assert resp.status_code == 400
 
-    def test_200_para_fi(self, client, monkeypatch):
+    def test_200_inicia_job_e_sincroniza(self, client, monkeypatch):
         a = Ativo.objects.create(tipo="FI", id_quantum="2", nome="AMW")
 
-        def fake_coletar(self, ativo, competencia=None):
-            from scrapper.models import CarteiraFundo
+        def fake_sync(self, ativo, forcar=False):
             from datetime import date as d
-            return CarteiraFundo.objects.create(ativo=ativo, competencia=d(2026, 4, 1))
+            c = CarteiraFundo.objects.create(ativo=ativo, competencia=d(2026, 4, 30))
+            PosicaoCarteira.objects.create(carteira=c, nome="LFT", participacao=10.0, ordem=0)
+            return [d(2026, 4, 30)]
 
-        monkeypatch.setattr("scrapper.views.QuantumService.coletar_carteira", fake_coletar)
+        monkeypatch.setattr("scrapper.views.QuantumService.sincronizar_carteiras", fake_sync)
+        monkeypatch.setattr("scrapper.views.threading.Thread", _SyncThread)
         resp = client.post(f"/ativos/{a.id}/carteira/atualizar/")
         assert resp.status_code == 200
-        assert resp.json()["ok"] is True
+        job_id = resp.json()["job_id"]
+        job = Job.objects.get(id=job_id)
+        assert job.tipo == "carteira"
+        assert job.status == "done"
+        assert CarteiraFundo.objects.filter(ativo=a).count() == 1
 
-    def test_erro_de_rede_502(self, client, monkeypatch):
+    def test_erro_registrado_no_job(self, client, monkeypatch):
         a = Ativo.objects.create(tipo="FI", id_quantum="3", nome="X")
 
-        def fake_coletar(self, ativo, competencia=None):
+        def fake_sync(self, ativo, forcar=False):
             raise RuntimeError("falha de rede")
 
-        monkeypatch.setattr("scrapper.views.QuantumService.coletar_carteira", fake_coletar)
+        monkeypatch.setattr("scrapper.views.QuantumService.sincronizar_carteiras", fake_sync)
+        monkeypatch.setattr("scrapper.views.threading.Thread", _SyncThread)
         resp = client.post(f"/ativos/{a.id}/carteira/atualizar/")
-        assert resp.status_code == 502
-        assert "erro" in resp.json()
+        assert resp.status_code == 200
+        job = Job.objects.get(id=resp.json()["job_id"])
+        assert job.status == "error"
+        assert "falha de rede" in job.erro

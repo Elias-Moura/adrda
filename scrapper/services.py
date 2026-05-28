@@ -11,7 +11,7 @@ from django.db import transaction
 from loguru import logger
 
 from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria, PosicaoCarteira
-from scrapper.quantum import parsers
+from scrapper.quantum import carteira_html, parsers
 from scrapper.quantum.catalogo import INDICES, MEDIDAS_POR_TIPO, TipoAtivo
 from scrapper.quantum.client import QuantumClient
 from scrapper.quantum.schemas import AtivoQuantum as AtivoQuantumSchema
@@ -134,6 +134,74 @@ class QuantumService:
                 )
                 for i, p in enumerate(carteira_dom.posicoes)
             ])
+        return carteira
+
+    def sincronizar_carteiras(self, ativo: Ativo, forcar: bool = False) -> list[date]:
+        """Sincroniza TODAS as competências da carteira (FI) via relatório .qt.
+
+        Persiste, por competência, as posições (nome/valor em milhares/participação)
+        e as agregações (tipo/setor/risco/classe). Incremental: competências já no
+        banco são puladas; ``forcar=True`` refaz todas. Devolve as competências
+        presentes no banco após a sincronização (mais recente primeiro).
+        """
+        if ativo.tipo != TipoAtivo.FI:
+            raise ValueError("Carteira disponível apenas para fundos (FI).")
+        self._ensure_login()
+
+        html = self._client.abrir_carteira_fundo(ativo.id_quantum)
+        cart = carteira_html.parse_carteira_qt(html)
+        if not cart.datas:
+            raise ValueError("Nenhuma competência de carteira disponível para este fundo.")
+        chave = carteira_html.extrair_chave(html)
+
+        # Remove competências obsoletas (ex.: o bug antigo de competência no dia 1º)
+        # que não constam no seletor atual do Quantum.
+        CarteiraFundo.objects.filter(ativo=ativo).exclude(competencia__in=cart.datas).delete()
+
+        existentes: set[date] = set() if forcar else set(
+            CarteiraFundo.objects.filter(ativo=ativo).values_list("competencia", flat=True)
+        )
+
+        # A competência mais recente já veio no HTML de abertura — evita um refetch.
+        if cart.competencia and (forcar or cart.competencia not in existentes):
+            self._persistir_carteira_qt(ativo, cart)
+
+        for competencia in cart.datas:
+            if competencia == cart.competencia or competencia in existentes:
+                continue
+            html = self._client.trocar_competencia_carteira(
+                chave, competencia.strftime("%m/%d/%Y")
+            )
+            chave = carteira_html.extrair_chave(html)
+            self._persistir_carteira_qt(ativo, carteira_html.parse_carteira_qt(html))
+
+        return list(
+            CarteiraFundo.objects.filter(ativo=ativo)
+            .order_by("-competencia").values_list("competencia", flat=True)
+        )
+
+    @transaction.atomic
+    def _persistir_carteira_qt(self, ativo: Ativo, cart: carteira_html.CarteiraQt) -> CarteiraFundo:
+        """Upsert de uma CarteiraFundo (posições + agregações) a partir do .qt."""
+        if cart.competencia is None:
+            raise ValueError("Carteira sem competência: HTML inesperado.")
+        # JSON-serializável: tuplas -> listas.
+        agregacoes = {
+            dim: [[rotulo, pct] for rotulo, pct in itens]
+            for dim, itens in cart.agregacoes.items()
+        }
+        carteira, _ = CarteiraFundo.objects.update_or_create(
+            ativo=ativo, competencia=cart.competencia,
+            defaults={"agregacoes": agregacoes},
+        )
+        carteira.posicoes.all().delete()
+        PosicaoCarteira.objects.bulk_create([
+            PosicaoCarteira(
+                carteira=carteira, nome=p.nome, participacao=p.participacao,
+                valor=p.valor, ordem=i,
+            )
+            for i, p in enumerate(cart.posicoes)
+        ])
         return carteira
 
     def coletar_indices(self, data_inicio: date, data_fim: date) -> int:

@@ -178,6 +178,96 @@ class TestColetarCarteira:
         assert [p.nome for p in carteira.posicoes.all()] == ["B", "C"]
 
 
+def _html_carteira(competencia_sel: str, datas: list[str], posicoes: list[tuple]) -> str:
+    """Monta um HTML .qt mínimo para mockar abrir/trocar competência."""
+    opts = "".join(
+        f'<option {"selected" if d == competencia_sel else ""} value="{d}">{d}</option>'
+        for d in datas
+    )
+    linhas = "".join(
+        f'<TR><TD><a href="javascript: exibirDetalhes(\'{i:08X}-0000-0000-0000-000000000000\')">'
+        f'<font>{nome}</font></a></TD>'
+        f'<TD><font> <font>{valor}</font> </font></TD>'
+        f'<TD><font> <font>{pct} %</font> </font></TD></TR>'
+        for i, (nome, valor, pct) in enumerate(posicoes)
+    )
+    return (
+        '<script>"&chave=db5bed57-5b20-4f20-a164-9df8b9a9e22e&codigo=1"</script>'
+        f'<select id="datas">{opts}</select>'
+        '<td><font color="#004379">Asset Type</font></td>'
+        '<td><font color="#004379">Government Bonds</font></td><td><font color="#004379">100.00 %</font></td>'
+        '<td><font color="#004379">&nbsp;Portfolio Composition</font></td>'
+        f'<table>{linhas}</table>'
+    )
+
+
+@pytest.mark.django_db
+class TestSincronizarCarteiras:
+    def test_rejeita_nao_fi(self):
+        svc = QuantumService(client=MagicMock())
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="ACAO", id_quantum="1", nome="PETR4")
+        with pytest.raises(ValueError, match="apenas para fundos"):
+            svc.sincronizar_carteiras(ativo)
+
+    def test_itera_todas_as_competencias(self):
+        client = MagicMock()
+        client.abrir_carteira_fundo.return_value = _html_carteira(
+            "04/30/2026", ["04/30/2026", "03/31/2026"],
+            [("LFT 2030", "85,517.91", "60.0000"), ("NTN-B", "50,000.00", "40.0000")],
+        )
+        client.trocar_competencia_carteira.return_value = _html_carteira(
+            "03/31/2026", ["04/30/2026", "03/31/2026"],
+            [("LFT 2029", "10,000.00", "100.0000")],
+        )
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="612014", nome="AMW")
+
+        competencias = svc.sincronizar_carteiras(ativo)
+
+        assert competencias == [date(2026, 4, 30), date(2026, 3, 31)]
+        assert CarteiraFundo.objects.filter(ativo=ativo).count() == 2
+        recente = CarteiraFundo.objects.get(ativo=ativo, competencia=date(2026, 4, 30))
+        assert recente.posicoes.count() == 2
+        p0 = recente.posicoes.first()
+        assert p0.nome == "LFT 2030" and p0.valor == 85517.91 and p0.participacao == 60.0
+        assert recente.agregacoes["tipo"] == [["Government Bonds", 100.0]]
+        # só uma troca de competência (a recente veio da abertura)
+        client.trocar_competencia_carteira.assert_called_once()
+
+    def test_incremental_pula_existentes(self):
+        client = MagicMock()
+        client.abrir_carteira_fundo.return_value = _html_carteira(
+            "04/30/2026", ["04/30/2026", "03/31/2026"], [("LFT", "1.00", "100.0000")],
+        )
+        client.trocar_competencia_carteira.return_value = _html_carteira(
+            "03/31/2026", ["04/30/2026", "03/31/2026"], [("LFT", "1.00", "100.0000")],
+        )
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        svc.sincronizar_carteiras(ativo)
+        client.trocar_competencia_carteira.reset_mock()
+        # 2ª chamada: ambas já existem -> nenhuma troca
+        svc.sincronizar_carteiras(ativo)
+        client.trocar_competencia_carteira.assert_not_called()
+
+    def test_remove_competencias_obsoletas(self):
+        client = MagicMock()
+        client.abrir_carteira_fundo.return_value = _html_carteira(
+            "04/30/2026", ["04/30/2026"], [("LFT", "1.00", "100.0000")],
+        )
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        # competência legada (bug do dia 1º) que não está no seletor atual
+        CarteiraFundo.objects.create(ativo=ativo, competencia=date(2026, 5, 1))
+        svc.sincronizar_carteiras(ativo)
+        comps = list(CarteiraFundo.objects.filter(ativo=ativo).values_list("competencia", flat=True))
+        assert comps == [date(2026, 4, 30)]
+
+
 @pytest.mark.django_db
 class TestSeedIndices:
     def test_cria_nove_indices(self):
