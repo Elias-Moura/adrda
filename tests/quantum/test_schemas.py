@@ -66,3 +66,21 @@ class TestAtivoQuantum:
         )
         assert aq.id_quantum == "612014"
         assert aq.primeira_cota is None
+
+
+class TestCarteiraSchema:
+    def test_posicao_aceita_participacao_float(self):
+        from scrapper.quantum.schemas import PosicaoCarteira as PosicaoSchema
+        p = PosicaoSchema(nome="LFT 2030", participacao=12.34)
+        assert p.participacao == 12.34
+
+    def test_posicao_coage_participacao_string(self):
+        from scrapper.quantum.schemas import PosicaoCarteira as PosicaoSchema
+        p = PosicaoSchema(nome="LFT 2030", participacao="12.3351017")
+        assert round(p.participacao, 4) == 12.3351
+
+    def test_carteira_vazia_por_padrao(self):
+        from scrapper.quantum.schemas import Carteira
+        c = Carteira()
+        assert c.posicoes == []
+        assert c.competencia is None

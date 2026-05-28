@@ -40,6 +40,18 @@ class SerieDiaria(BaseModel):
     pontos: list[PontoSerie] = []
 
 
+class PosicaoCarteira(BaseModel):
+    """Uma posição da carteira investida (nome do ativo + participação %)."""
+
+    nome: str
+    participacao: float
+
+
+class Carteira(BaseModel):
+    competencia: date | None = None
+    posicoes: list[PosicaoCarteira] = []
+
+
 class MetaBase(BaseModel):
     """Base tolerante para os metadados por tipo."""
 
