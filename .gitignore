@@ -118,3 +118,6 @@ credentials.json
 # Claude / agentes
 .claude/
 .playwright-mcp/
+
+# Brainstorming visual companion (não versionar)
+.superpowers/
