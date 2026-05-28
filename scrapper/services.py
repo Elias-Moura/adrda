@@ -47,6 +47,23 @@ def calcular_retornos_serie(valores: list[Decimal]) -> list[tuple[Decimal, Decim
     return resultado
 
 
+def recalcular_retornos(ativo: Ativo) -> int:
+    """Recomputa retorno/retorno_ln da série inteira do ativo a partir de `valor`.
+
+    Idempotente. Lê a série ordenada por data, delega o cálculo a
+    `calcular_retornos_serie` e grava via bulk_update. Devolve o nº de cotas.
+    """
+    cotacoes = list(CotacaoDiaria.objects.filter(ativo=ativo).order_by("data"))
+    if not cotacoes:
+        return 0
+    retornos = calcular_retornos_serie([c.valor for c in cotacoes])
+    for cotacao, (retorno, retorno_ln) in zip(cotacoes, retornos):
+        cotacao.retorno = retorno
+        cotacao.retorno_ln = retorno_ln
+    CotacaoDiaria.objects.bulk_update(cotacoes, ["retorno", "retorno_ln"])
+    return len(cotacoes)
+
+
 class QuantumService:
     """Orquestra busca/import/coleta. Login lazy na primeira chamada de rede."""
 

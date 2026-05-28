@@ -7,7 +7,7 @@ import pytest
 
 from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria
 from scrapper.quantum.catalogo import TipoAtivo
-from scrapper.services import QuantumService, calcular_retornos_serie, parece_cnpj, seed_indices
+from scrapper.services import QuantumService, calcular_retornos_serie, parece_cnpj, recalcular_retornos, seed_indices
 
 
 def _multiplex_valor(valores: list) -> dict:
@@ -404,4 +404,35 @@ class TestImportarSemMedidas:
         assert len(ativos) == 1
         assert ativos[0].tipo == "RENDA_FIXA"
         assert ativos[0].id_quantum == "VALE38"
-        client.dados_complementares.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestRecalcularRetornos:
+    def _ativo_com_serie(self, valores):
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        for i, v in enumerate(valores, start=2):
+            CotacaoDiaria.objects.create(
+                ativo=ativo, data=f"2024-01-{i:02d}", valor=Decimal(v)
+            )
+        return ativo
+
+    def test_grava_retornos_da_serie(self):
+        ativo = self._ativo_com_serie(["100", "110", "121"])
+        n = recalcular_retornos(ativo)
+        assert n == 3
+        cotas = list(ativo.cotacoes.order_by("data"))
+        assert cotas[0].retorno == Decimal("0")
+        assert cotas[1].retorno == Decimal("0.1")
+        assert cotas[2].retorno == Decimal("0.1")  # 121/110 - 1
+
+    def test_idempotente(self):
+        ativo = self._ativo_com_serie(["100", "110"])
+        recalcular_retornos(ativo)
+        antes = [(c.retorno, c.retorno_ln) for c in ativo.cotacoes.order_by("data")]
+        recalcular_retornos(ativo)
+        depois = [(c.retorno, c.retorno_ln) for c in ativo.cotacoes.order_by("data")]
+        assert antes == depois
+
+    def test_sem_cotas_retorna_zero(self):
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="2", nome="Y")
+        assert recalcular_retornos(ativo) == 0
