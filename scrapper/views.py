@@ -145,6 +145,27 @@ def detalhe_ativo(request, ativo_id):
 
 
 @require_POST
+def atualizar_carteira(request, ativo_id):
+    """Coleta sob demanda a carteira do fundo (FI) e persiste. Síncrono."""
+    ativo = get_object_or_404(Ativo, id=ativo_id)
+    if ativo.tipo != TipoAtivo.FI:
+        return JsonResponse(
+            {"erro": "Carteira disponível apenas para fundos (FI)."}, status=400
+        )
+    try:
+        carteira = QuantumService().coletar_carteira(ativo)
+    except ValueError as exc:
+        return JsonResponse({"erro": str(exc)}, status=400)
+    except Exception as exc:
+        return JsonResponse({"erro": f"Falha ao coletar carteira: {exc}"}, status=502)
+    return JsonResponse({
+        "ok": True,
+        "competencia": carteira.competencia.isoformat(),
+        "posicoes": carteira.posicoes.count(),
+    })
+
+
+@require_POST
 def buscar_ativos(request):
     arquivo = request.FILES.get("arquivo")
     if not arquivo:

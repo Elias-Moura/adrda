@@ -259,3 +259,35 @@ class TestExcluirAtivoView:
     def test_get_nao_permitido(self, client):
         a = Ativo.objects.create(tipo="FI", id_quantum="1", nome="A")
         assert client.get(f"/ativos/{a.id}/excluir/").status_code == 405
+
+
+@pytest.mark.django_db
+class TestAtualizarCarteira:
+    def test_400_para_nao_fi(self, client):
+        a = Ativo.objects.create(tipo="FII", id_quantum="1", nome="FII X")
+        resp = client.post(f"/ativos/{a.id}/carteira/atualizar/")
+        assert resp.status_code == 400
+
+    def test_200_para_fi(self, client, monkeypatch):
+        a = Ativo.objects.create(tipo="FI", id_quantum="2", nome="AMW")
+
+        def fake_coletar(self, ativo, competencia=None):
+            from scrapper.models import CarteiraFundo
+            from datetime import date as d
+            return CarteiraFundo.objects.create(ativo=ativo, competencia=d(2026, 4, 1))
+
+        monkeypatch.setattr("scrapper.views.QuantumService.coletar_carteira", fake_coletar)
+        resp = client.post(f"/ativos/{a.id}/carteira/atualizar/")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+    def test_erro_de_rede_502(self, client, monkeypatch):
+        a = Ativo.objects.create(tipo="FI", id_quantum="3", nome="X")
+
+        def fake_coletar(self, ativo, competencia=None):
+            raise RuntimeError("falha de rede")
+
+        monkeypatch.setattr("scrapper.views.QuantumService.coletar_carteira", fake_coletar)
+        resp = client.post(f"/ativos/{a.id}/carteira/atualizar/")
+        assert resp.status_code == 502
+        assert "erro" in resp.json()
