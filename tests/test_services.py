@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scrapper.models import Ativo, CotacaoDiaria
+from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria
 from scrapper.quantum.catalogo import TipoAtivo
 from scrapper.services import QuantumService, parece_cnpj, seed_indices
 
@@ -17,6 +17,10 @@ def _multiplex_valor(valores: list) -> dict:
 def _multiplex_serie(pontos: list[tuple[str, str]]) -> dict:
     serie = [{"data": d, "valor": v} for d, v in pontos]
     return {"responseList": [{"body": json.dumps({"serie": serie})}]}
+
+
+def _multiplex_carteira(itens: list) -> dict:
+    return {"responseList": [{"body": json.dumps(itens)}]}
 
 
 _GRUPOS_FI = [{
@@ -121,6 +125,45 @@ class TestColetarSerie:
         svc.coletar_serie(ativo, date(2024, 1, 1), date(2024, 12, 31))
         di_chamado = client.serie.call_args[0][2]
         assert di_chamado == date(2024, 1, 1)
+
+
+@pytest.mark.django_db
+class TestColetarCarteira:
+    def test_rejeita_tipo_nao_fi(self):
+        client = MagicMock()
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FII", id_quantum="1", nome="FII X")
+        with pytest.raises(ValueError, match="apenas para fundos"):
+            svc.coletar_carteira(ativo)
+
+    def test_persiste_posicoes(self):
+        client = MagicMock()
+        client.carteira.return_value = _multiplex_carteira([
+            {"ativo": "LFT 2030", "participacao": "12.3"},
+            {"ativo": "NTN-B 2028", "participacao": "9.8"},
+        ])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="612014", nome="AMW")
+        carteira = svc.coletar_carteira(ativo, competencia=date(2026, 4, 1))
+        assert carteira.posicoes.count() == 2
+        assert carteira.posicoes.first().nome == "LFT 2030"
+        assert carteira.posicoes.first().ordem == 0
+
+    def test_upsert_substitui_posicoes_antigas(self):
+        client = MagicMock()
+        client.carteira.return_value = _multiplex_carteira([{"ativo": "A", "participacao": "1"}])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        svc.coletar_carteira(ativo, competencia=date(2026, 4, 1))
+        client.carteira.return_value = _multiplex_carteira([
+            {"ativo": "B", "participacao": "2"}, {"ativo": "C", "participacao": "3"},
+        ])
+        carteira = svc.coletar_carteira(ativo, competencia=date(2026, 4, 1))
+        assert CarteiraFundo.objects.filter(ativo=ativo).count() == 1
+        assert [p.nome for p in carteira.posicoes.all()] == ["B", "C"]
 
 
 @pytest.mark.django_db

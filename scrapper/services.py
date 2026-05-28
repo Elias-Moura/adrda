@@ -10,7 +10,7 @@ from datetime import date
 from django.db import transaction
 from loguru import logger
 
-from scrapper.models import Ativo, CotacaoDiaria
+from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria, PosicaoCarteira
 from scrapper.quantum import parsers
 from scrapper.quantum.catalogo import INDICES, MEDIDAS_POR_TIPO, TipoAtivo
 from scrapper.quantum.client import QuantumClient
@@ -109,6 +109,32 @@ class QuantumService:
             update_fields=["valor"],
         )
         return len(objs)
+
+    def coletar_carteira(self, ativo: Ativo, competencia: date | None = None) -> CarteiraFundo:
+        """Coleta a composição da carteira do fundo (FI) e persiste por competência.
+
+        Disponível apenas para FI; FII/Ação levantam ValueError. Idempotente por
+        (ativo, competencia): substitui as posições anteriores.
+        """
+        if ativo.tipo != TipoAtivo.FI:
+            raise ValueError("Carteira disponível apenas para fundos (FI).")
+        if competencia is None:
+            competencia = date.today().replace(day=1)
+        self._ensure_login()
+        raw = self._client.carteira(TipoAtivo(ativo.tipo), ativo.id_quantum, competencia)
+        carteira_dom = parsers.parse_carteira(raw, competencia=competencia)
+        with transaction.atomic():
+            carteira, _ = CarteiraFundo.objects.update_or_create(
+                ativo=ativo, competencia=competencia
+            )
+            carteira.posicoes.all().delete()
+            PosicaoCarteira.objects.bulk_create([
+                PosicaoCarteira(
+                    carteira=carteira, nome=p.nome, participacao=p.participacao, ordem=i
+                )
+                for i, p in enumerate(carteira_dom.posicoes)
+            ])
+        return carteira
 
     def coletar_indices(self, data_inicio: date, data_fim: date) -> int:
         """Coleta a série de todos os índices semeados."""
