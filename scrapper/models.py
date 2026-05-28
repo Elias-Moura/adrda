@@ -66,6 +66,7 @@ class Job(models.Model):
     TIPO_CHOICES = [
         ("buscar_ativos", "Buscar Ativos"),
         ("scrap", "Scrap Cotas"),
+        ("carteira", "Sincronizar Carteira"),
     ]
     STATUS_CHOICES = [
         ("running", "Em execução"),
@@ -97,6 +98,9 @@ class CarteiraFundo(models.Model):
     )
     competencia = models.DateField()
     importada_em = models.DateTimeField(auto_now=True)
+    # Agregações do relatório .qt: {"tipo": [["Government Bonds", 51.43], ...],
+    # "setor": [...], "risco": [...], "classe": [...]}. Vazio se só houver REST.
+    agregacoes = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["-competencia"]
@@ -120,6 +124,9 @@ class PosicaoCarteira(models.Model):
     )
     nome = models.CharField(max_length=255)
     participacao = models.FloatField()
+    # Valor da posição em milhares de reais (relatório .qt). Null quando a fonte
+    # é o endpoint REST, que só expõe a participação.
+    valor = models.FloatField(null=True, blank=True)
     ordem = models.PositiveIntegerField(default=0)
 
     class Meta:

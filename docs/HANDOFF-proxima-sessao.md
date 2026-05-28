@@ -46,6 +46,11 @@ impedia parsear metadados de FII/ACAO por posição.)
 
 ## Fases seguintes (fora da Fase 1)
 
-- Composição de carteira investida (REST JSON p/ FI; extrato `.qt` p/ FII).
+- ✅ **Composição de carteira investida (FI)** — feito (28/05/2026): scrape do
+  relatório `.qt` com seletor de competências, valor em R$ mil e agregações
+  (tipo/setor/risco/classe). Ver `docs/api-quantum.md` › "Extrato / carteira
+  investida" e `scrapper/quantum/carteira_html.py`. Pendente: composição de **FII**
+  (REST vem vazio; precisa do `.qt` próprio do FII) e carteira **consolidada**
+  (look-through), bloqueada fora do contexto de comparação.
 - Front-end (templates Django) para as novas funcionalidades.
 - Cálculo local de métricas de risco a partir da cota diária.

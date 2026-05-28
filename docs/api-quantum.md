@@ -242,10 +242,15 @@ ativo**. Dá para batelar N ativos por requisição — ganho relevante para o `
 
 ## Extrato / carteira investida (composição dos ativos)
 
-Capturado em 26/05/2026 abrindo o extrato do fundo AMW Cash Clash. **Esta parte
-NÃO é a API REST limpa** — são páginas HTML renderizadas no servidor (servlet
-`.qt`, com jQuery; **não é Wicket**), com estado preso à sessão por uma `chave`
-(UUID). Há, porém, um ponto de entrada JSON que dá pra reproduzir em Python.
+Capturado em 26/05/2026 e **confirmado/implementado em 28/05/2026** (fundo AMW Cash
+Clash, `id_quantum=612014`). **Esta parte NÃO é a API REST limpa** — são páginas HTML
+renderizadas no servidor (servlet `.qt`, com jQuery; **não é Wicket**), com estado
+preso à sessão por uma `chave` (UUID).
+
+> ✅ **Implementado** em `scrapper/quantum/carteira_html.py` (parser),
+> `QuantumClient.abrir_carteira_fundo`/`trocar_competencia_carteira` (transporte) e
+> `QuantumService.sincronizar_carteiras` (orquestração). A tela `/ativos/<id>/`
+> consome isso com seletor de competências, valor em R$ mil e agregações.
 
 ### Disponibilidade por tipo de ativo (testado)
 
@@ -260,49 +265,74 @@ NÃO é a API REST limpa** — são páginas HTML renderizadas no servidor (serv
 
 ### Dois relatórios
 
-- **`carteiraFundo.qt`** — carteira **direta** do fundo.
+- **`carteiraFundo.qt`** — carteira **direta** do fundo. ✅ É a que usamos.
 - **`carteiraPortfolio.qt`** — carteira **consolidada** (look-through de fundos
   aninhados). Para fundos simples os dois batem; para fundos de fundos diferem.
+  ⚠️ **Bloqueada fora do contexto de comparação:** acessar direto retorna *"It was
+  not possible to create the portfolio"*. Só abre depois de adicionar o ativo à
+  ferramenta de comparação. Por isso a implementação usa a **direta**.
 
-Mesma mecânica de `chave`/`acao` nos dois.
+### Fluxo (confirmado e reproduzido)
 
-### Fluxo (3 passos)
+A página real exige **dois POSTs** (a `wait.jsp` é só uma tela de "Loading" que
+faz `document.form.submit()` automaticamente para o `.qt`). Sequência:
 
 ```
-1. POST /webaxis/webaxis2/carteira/lamina/ajax/laminaFundo
-   body: {"nome": "<nome EXATO do ativo>", "esconderBotaoVoltar": true}
-   → {"statusCode":200,
-      "payLoad":"/webaxis/wait.jsp?codigo=612014&gotopage=carteiraFundo.qt&acao=acessoDireto&esconderBotaoVoltar=true"}
-      (codigo = id_quantum; statusCode 500 se o ativo não tem carteira)
+1. GET /webaxis/wait.jsp?codigo=612014&mostrarProgresso=true
+       &gotopage=carteiraFundo.qt&acao=acessoDireto&esconderBotaoVoltar=true
+   → página de espera com um <form method=post action="carteiraFundo.qt"> oculto.
 
-2. GET /webaxis/wait.jsp?codigo=612014&gotopage=carteiraFundo.qt&acao=acessoDireto&...
-   → servidor monta o estado, cunha a `chave` (UUID) e redireciona para a
-     página HTML carteiraFundo.qt (a `chave` fica embutida no HTML/JS inline).
+2. POST /webaxis/carteiraFundo.qt
+   data: codigo=612014, gotopage=carteiraFundo.qt, acao=acessoDireto, esconderBotaoVoltar=true
+   → HTML completo (~205 KB) da competência MAIS RECENTE, com o <select id="datas">,
+     a tabela de posições, as agregações e a `chave` (UUID minúsculo, aparece como
+     &chave=... no JS inline). É o primeiro UUID minúsculo do HTML.
 
-3. A partir da página (usando a `chave` extraída do HTML):
-   - Trocar mês:  GET /webaxis/wait.jsp?gotopage=carteiraFundo.qt&acao=alterarData
-                      &data=MM/DD/YYYY&chave=<uuid>&ocultarAtivosSemParticipacao=false
-   - Export Excel: GET /webaxis/carteiraFundo.qt?acao=exportarExcel&chave=<uuid>
-   - Export PDF:   GET /webaxis/carteiraFundo.qt?acao=exportarPDF&chave=<uuid>
+3. Trocar competência (dado o HTML atual, de onde se extrai a chave):
+   a) GET /webaxis/wait.jsp?gotopage=carteiraFundo.qt&acao=alterarData
+          &data=MM/DD/YYYY&chave=<uuid_atual>&ocultarAtivosSemParticipacao=false
+      → nova página de espera com uma `chave` RENOVADA no form.
+   b) POST /webaxis/carteiraFundo.qt
+          data: gotopage=carteiraFundo.qt, acao=alterarData, data=MM/DD/YYYY,
+                chave=<uuid_renovado>, ocultarAtivosSemParticipacao=false
+      → HTML completo da competência pedida (que traz, por sua vez, a chave do
+        próximo passo). Encadeia-se assim por todas as competências.
+
+   (Export Excel/PDF: GET carteiraFundo.qt?acao=exportarExcel|exportarPDF&chave=<uuid>
+    — porém o Excel retornou página de erro fora do contexto vivo; preferimos
+    raspar o HTML do passo 2/3, que já tem tudo.)
 ```
+
+> ⚠️ **Competência = último dia ÚTIL do mês**, não o dia 1º nem o último dia de
+> calendário. Ex.: `02/27/2026` (28 é sábado), `11/28/2025` (30 é domingo). Mandar
+> a data errada faz o REST devolver `[]` e o `.qt` não achar a competência. A lista
+> certa vem pronta no `<select id="datas">` (MM/DD/YYYY) — não precisa adivinhar.
 
 ### Dados disponíveis no relatório
 
-- Cabeçalho: nome, **data de competência** (seletor mensal; no fundo testado, de
-  09/2021 a 04/2026), CNPJ, gestão.
-- Agregações com % : **Asset Type** (Government Bonds, Private Bonds, Committed
+- Cabeçalho: nome, **data de competência** (`<select id="datas">`; no AMW, 56 meses
+  de 09/2021 a 04/2026), CNPJ, gestão.
+- Agregações com %: **Asset Type** (Government Bonds, Private Bonds, Committed
   operation, Derivative...), **Sector** (Federal Government, Banks...), **Risk**
-  (Rating AAA, Market's risk...), **Class** (Selic, Inflation, Prefixed...).
-- **Composição** (tabela, ~60 linhas): `Asset's Name | Asset's Value (thousand) |
-  Asset's Participation %` — ex.: `LFT - Venc.: 01/03/2030 | 85.567,15 | 12,3422%`.
+  (Rating AAA, Market's risk...), **Class** (Selic, Inflation, Prefixed...). No HTML
+  vêm como pares `<font color="#004379">rótulo</font>` / `<font color="#004379">%</font>`,
+  em ordem, com os 4 cabeçalhos de dimensão e terminando em `Portfolio Composition`.
+- **Composição** (tabela, ~52 linhas): `Nome | Valor (milhares) | Participação %`.
+  Cada linha tem `exibirDetalhes('<uuid>')` na âncora do nome; valor/participação em
+  `<font><font>85,517.91</font></font>` (formato en-US: vírgula de milhar, ponto
+  decimal). Ex.: `LFT - Venc.: 01/03/2030 | 85,517.91 | 12.3351 %`.
 
-### Estratégia de reprodução
+### Estratégia de reprodução (implementada)
 
-1. **Preferir o Export Excel** (passo 3): dados estruturados, evita raspar HTML
-   aninhado (o relatório é uma árvore de `<table>` dentro de `<table>`).
-2. Alternativa: raspar o HTML de `carteiraFundo.qt` com BeautifulSoup/lxml.
-3. ⚠️ `Accept-Language` controla o idioma dos rótulos (en-US → inglês; pt-BR →
-   português). Fixar para ter chaves estáveis no parser.
+1. Raspar o **HTML** dos passos 2/3 (parser em `carteira_html.py`). O Export Excel
+   é frágil (estado preso à sessão; deu página de erro fora do contexto vivo).
+2. ⚠️ **Rótulos ficam em INGLÊS** mesmo mandando `Accept-Language: pt-BR` — a conta
+   está fixada em inglês. O parser identifica as 4 dimensões pelos cabeçalhos fixos
+   (`Asset Type`/`Sector`/`Risk`/`Class`) e as posições pela estrutura
+   (`exibirDetalhes` + `<font>` aninhado), não por texto traduzível.
+3. ⚠️ **Conta single-session:** um login do backend **derruba** quem estiver no
+   navegador com o mesmo usuário (e vice-versa). A sincronização de todas as
+   competências leva ~40 s; rodar como Job e, idealmente, com conta dedicada.
 
 ### Alternativa REST JSON (`/api/ativos/{tipo}/{id}/carteira`) — inspecionado
 
@@ -325,20 +355,27 @@ Resposta (`responseList[0].body`, string JSON) = lista de `{ativo, participacao}
 ]
 ```
 
-**Testado (26/05/2026):**
+**Testado (26–28/05/2026):**
 
 | Tipo | Resultado |
 |------|-----------|
 | `FI`, `quantidade=10` | top-10 + linha `"Outros Ativos"` (somatório do resto) |
 | `FI`, `quantidade=100` | **carteira completa** (53 itens, sem agrupar) |
+| `FI`, `tipoCarteira=CONSOLIDADA` | **funciona** (consolidada, participação confere com a tela) |
 | `FII`, `INDIVIDUAL`/`CONSOLIDADA` | **`[]` vazio** — não exposto por aqui |
+
+> ⚠️ Mesma regra de competência do `.qt`: `dataCompetencia` precisa ser o **último
+> dia útil do mês** (exato). `dataCompetencia` é obrigatório; sem ele → 400. Não há
+> endpoint que liste as competências (testados `/carteira/datasDisponiveis`,
+> `/competencias`, etc. → todos 404); a lista só vem do `<select>` do `.qt`.
 
 **Conclusões:**
 
-- ✅ Para **FI**, com `quantidade` alto, é a via mais limpa: composição completa em
-  JSON, sem o fluxo `chave`+HTML.
-- ❌ Só traz `ativo` + `participacao` — **não** tem valor em milhares nem as
-  agregações por tipo/setor/risco/classe (isso só no relatório `.qt`/Excel).
+- ✅ Para **FI**, com `quantidade` alto, é a via mais limpa para **participação**:
+  composição completa em JSON, sem o fluxo `chave`+HTML. Aceita
+  `tipoCarteira=CONSOLIDADA`.
+- ❌ Só traz `ativo` + `participacao` — **não** tem valor em milhares, agregações,
+  nem a lista de competências (isso só no relatório `.qt`).
 - ❌ **FII retorna vazio** — para composição de FII, usar o extrato `.qt`.
 - ⚠️ `/b` **exige o Bearer token** (`authorization`); só o cookie → 401 (Varnish).
   `_headers_api()` já envia o token. (A busca global e o `laminaFundo` aceitam só
@@ -348,8 +385,8 @@ Resposta (`responseList[0].body`, string JSON) = lista de `{ativo, participacao}
 
 | Necessidade | Via recomendada |
 |-------------|-----------------|
-| % de cada posição de **FI** | REST JSON `/carteira` com `quantidade` alto |
-| Valor (milhares) e/ou agregações tipo/setor/risco/classe | Extrato `.qt` (Excel) |
+| Valor (milhares) + agregações + lista de competências (**o que a app usa**) | Relatório `.qt` `carteiraFundo.qt` (scrape HTML) |
+| Só a % de cada posição de **FI** (mais leve) | REST JSON `/carteira` (`QuantumService.coletar_carteira`) |
 | Composição de **FII** | Extrato `.qt` (`laminaFundo`) — REST vem vazio |
 | **BDR/ação** | Não há carteira |
 
