@@ -184,3 +184,35 @@ class TestMontarAtivo:
         resultado = ResultadoBusca(label="X", tipo=TipoAtivo.FI, id_quantum="1")
         meta = MetaFI(NOME="X", INICIO_DO_FUNDO="Não informado")
         assert montar_ativo(resultado, meta).primeira_cota is None
+
+
+def _multiplex_carteira(itens: list[dict]) -> dict:
+    return {"responseList": [{"body": json.dumps(itens)}]}
+
+
+class TestParseCarteira:
+    def test_extrai_posicoes_com_participacao_float(self):
+        from scrapper.quantum.parsers import parse_carteira
+        raw = _multiplex_carteira([
+            {"ativo": "LFT - Venc.: 01/03/2030", "participacao": "12.33510179"},
+            {"ativo": "Outros Ativos", "participacao": "29.7519"},
+        ])
+        carteira = parse_carteira(raw, competencia=date(2026, 4, 1))
+        assert carteira.competencia == date(2026, 4, 1)
+        assert len(carteira.posicoes) == 2
+        assert carteira.posicoes[0].nome == "LFT - Venc.: 01/03/2030"
+        assert round(carteira.posicoes[0].participacao, 2) == 12.34
+
+    def test_item_malformado_e_descartado(self):
+        from scrapper.quantum.parsers import parse_carteira
+        raw = _multiplex_carteira([
+            {"ativo": "LFT 2030", "participacao": "12.3"},
+            {"ativo": "Quebrado"},  # sem participacao
+        ])
+        carteira = parse_carteira(raw)
+        assert len(carteira.posicoes) == 1
+
+    def test_body_ausente_carteira_vazia(self):
+        from scrapper.quantum.parsers import parse_carteira
+        carteira = parse_carteira({"responseList": []})
+        assert carteira.posicoes == []

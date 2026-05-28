@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from .catalogo import MEDIDAS_POR_TIPO, TipoAtivo
 from .schemas import (
     AtivoQuantum,
+    Carteira,
     MetaACAO,
     MetaBase,
     MetaFI,
@@ -18,6 +19,7 @@ from .schemas import (
     MetaIndice,
     MetaRendaFixa,
     PontoSerie,
+    PosicaoCarteira,
     ResultadoBusca,
     SerieDiaria,
 )
@@ -114,6 +116,30 @@ def parse_serie(raw_multiplex: dict) -> SerieDiaria:
             # Um ponto malformado é descartado sem perder a série inteira.
             logger.warning(f"Ponto de série ignorado ({p!r}): {exc}")
     return SerieDiaria(pontos=pontos)
+
+
+def parse_carteira(raw_multiplex: dict, competencia: date | None = None) -> Carteira:
+    """responseList[0].body -> [{ativo, participacao}] -> Carteira.
+
+    participacao vem como string com ponto decimal; itens malformados são
+    descartados (logados), no mesmo estilo de parse_serie.
+    """
+    body = _body_multiplex(raw_multiplex)
+    if not body:
+        return Carteira(competencia=competencia)
+    try:
+        itens = json.loads(body)
+    except (json.JSONDecodeError, TypeError):
+        return Carteira(competencia=competencia)
+    posicoes: list[PosicaoCarteira] = []
+    for item in itens:
+        try:
+            posicoes.append(
+                PosicaoCarteira(nome=item["ativo"], participacao=float(item["participacao"]))
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning(f"Posição de carteira ignorada ({item!r}): {exc}")
+    return Carteira(competencia=competencia, posicoes=posicoes)
 
 
 def _data_ou_none(valor: str | None) -> date | None:
