@@ -30,6 +30,8 @@ def _backfill_retornos(apps, schema_editor):
 
 
 def _noop(apps, schema_editor):
+    # Reversão derruba as colunas (AddField reverso); a perda dos retornos no
+    # rollback é aceitável — eles são recomputáveis a partir de `valor`.
     pass
 
 

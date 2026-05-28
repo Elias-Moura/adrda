@@ -148,6 +148,20 @@ class TestColetarSerie:
         di_chamado = client.serie.call_args[0][2]
         assert di_chamado == date(2024, 1, 1)
 
+    def test_ancora_na_primeira_cota_mesmo_com_inicio_posterior(self):
+        # valor é índice canônico: a coleta sempre ancora na primeira_cota,
+        # mesmo quando data_inicio é posterior (evita re-ancoragem/corrupção).
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(
+            tipo="FI", id_quantum="3", nome="W", primeira_cota=date(2003, 1, 1),
+        )
+        svc.coletar_serie(ativo, date(2024, 1, 1), date(2024, 12, 31))
+        di_chamado = client.serie.call_args[0][2]
+        assert di_chamado == date(2003, 1, 1)
+
     def test_persiste_decimal_e_calcula_retornos(self):
         client = MagicMock()
         client.serie.return_value = _multiplex_serie([

@@ -132,7 +132,9 @@ class QuantumService:
         """Coleta a série diária do ativo, faz upsert de `valor` (Decimal) e
         recomputa os retornos da série inteira."""
         self._ensure_login()
-        di = ativo.primeira_cota if (ativo.primeira_cota and ativo.primeira_cota > data_inicio) else data_inicio
+        # valor é um índice base-100 canônico: ancoramos sempre na primeira_cota
+        # quando conhecida, para não re-ancorar a série em janelas posteriores.
+        di = ativo.primeira_cota or data_inicio
         raw = self._client.serie(TipoAtivo(ativo.tipo), ativo.id_quantum, di, data_fim)
         serie = parsers.parse_serie(raw)
         if not serie.pontos:
