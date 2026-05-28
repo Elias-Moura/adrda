@@ -3,6 +3,7 @@ from scrapper.quantum.catalogo import (
     MEDIDAS_POR_TIPO,
     SubtipoAcao,
     TipoAtivo,
+    rotulo_tipo,
 )
 
 
@@ -39,6 +40,38 @@ class TestIndices:
 
     def test_contem_nove_indices(self):
         assert len(INDICES) == 9
+
+
+class TestRotuloTipo:
+    def test_fi(self):
+        assert rotulo_tipo(TipoAtivo.FI) == "Fundo de Investimento"
+
+    def test_fii(self):
+        assert rotulo_tipo(TipoAtivo.FII) == "Fundo Imobiliário"
+
+    def test_indice(self):
+        assert rotulo_tipo(TipoAtivo.INDICE) == "Índice"
+
+    def test_renda_fixa(self):
+        assert rotulo_tipo(TipoAtivo.RENDA_FIXA) == "Renda Fixa"
+
+    def test_acao_sem_subtipo(self):
+        assert rotulo_tipo(TipoAtivo.ACAO) == "Ação"
+
+    def test_acao_subtipo_stocks(self):
+        assert rotulo_tipo(TipoAtivo.ACAO, "Stocks") == "Ação"
+
+    def test_acao_subtipo_bdr(self):
+        assert rotulo_tipo(TipoAtivo.ACAO, "BDR") == "BDR"
+
+    def test_acao_subtipo_etf(self):
+        assert rotulo_tipo(TipoAtivo.ACAO, "ETF") == "ETF"
+
+    def test_aceita_tipo_como_string(self):
+        assert rotulo_tipo("FI") == "Fundo de Investimento"
+
+    def test_subtipo_desconhecido_cai_no_rotulo_base(self):
+        assert rotulo_tipo(TipoAtivo.ACAO, "Outro") == "Ação"
 
 
 class TestMedidasPorTipo:

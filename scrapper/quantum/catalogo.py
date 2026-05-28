@@ -23,6 +23,35 @@ class SubtipoAcao(StrEnum):
     ETF = "ETF"
 
 
+# Rótulos amigáveis exibidos ao usuário (tipo "como é no Quantum").
+# Para ACAO o subtipo refina o rótulo (BDR/ETF); demais caem no rótulo base.
+_ROTULO_BASE: dict[TipoAtivo, str] = {
+    TipoAtivo.FI: "Fundo de Investimento",
+    TipoAtivo.FII: "Fundo Imobiliário",
+    TipoAtivo.ACAO: "Ação",
+    TipoAtivo.INDICE: "Índice",
+    TipoAtivo.RENDA_FIXA: "Renda Fixa",
+}
+
+_ROTULO_SUBTIPO_ACAO: dict[str, str] = {
+    SubtipoAcao.BDR: "BDR",
+    SubtipoAcao.ETF: "ETF",
+    SubtipoAcao.STOCKS: "Ação",
+}
+
+
+def rotulo_tipo(tipo: "TipoAtivo | str", subtipo: str | None = None) -> str:
+    """Rótulo amigável do tipo do ativo para exibição na UI.
+
+    Ações são refinadas pelo subtipo (BDR/ETF); subtipos desconhecidos ou
+    ausentes caem no rótulo base do tipo.
+    """
+    tipo = TipoAtivo(tipo)
+    if tipo == TipoAtivo.ACAO and subtipo:
+        return _ROTULO_SUBTIPO_ACAO.get(subtipo, _ROTULO_BASE[TipoAtivo.ACAO])
+    return _ROTULO_BASE[tipo]
+
+
 # Catálogo de índices/benchmarks (id_quantum -> nome).
 # Fonte: /api/benchmarks/porFuncionalidade/COMPARACAO (docs/api-quantum.md).
 INDICES: dict[str, str] = {

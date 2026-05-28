@@ -60,6 +60,7 @@
           </button>
         </div>
       </form>
+      <div id="resultados-cnpj" class="list-group mt-2"></div>
       <div id="status-cnpj" class="mt-2" style="font-size:.82rem"></div>
     </div>
 
@@ -216,8 +217,87 @@ function bindForm(formId, url, statusId, btnId) {
   });
 }
 
-bindForm('form-buscar', '/buscar/',         'status-buscar', 'btn-buscar');
-bindForm('form-cnpj',   '/adicionar-cnpj/', 'status-cnpj',   'btn-cnpj');
-bindForm('form-scrap',  '/scrap/',          'status-scrap',  'btn-scrap');
+bindForm('form-buscar', '/buscar/', 'status-buscar', 'btn-buscar');
+bindForm('form-scrap',  '/scrap/',  'status-scrap',  'btn-scrap');
+
+// ── Adicionar ativo: buscar candidatos → selecionar → importar ──
+const formCnpj  = document.getElementById('form-cnpj');
+const resultados = document.getElementById('resultados-cnpj');
+const statusCnpj = document.getElementById('status-cnpj');
+const csrfCnpj   = formCnpj.querySelector('[name=csrfmiddlewaretoken]').value;
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s ?? '';
+  return d.innerHTML;
+}
+
+function renderCandidatos(candidatos) {
+  if (!candidatos.length) {
+    resultados.innerHTML =
+      '<div class="list-group-item text-muted small">Nenhum ativo encontrado.</div>';
+    return;
+  }
+  resultados.innerHTML = candidatos.map(c => `
+    <button type="button"
+      class="list-group-item list-group-item-action ${c.ja_cadastrado ? '' : 'candidato'}"
+      ${c.ja_cadastrado ? 'disabled' : ''}
+      data-id_quantum="${escapeHtml(c.id_quantum)}" data-tipo="${escapeHtml(c.tipo)}"
+      data-subtipo="${escapeHtml(c.subtipo)}" data-cnpj="${escapeHtml(c.cnpj)}"
+      data-nome="${escapeHtml(c.nome)}">
+      <div class="d-flex justify-content-between align-items-start gap-2">
+        <span class="small fw-semibold">${escapeHtml(c.nome)}</span>
+        <span class="badge text-bg-light flex-shrink-0">${escapeHtml(c.tipo_label)}</span>
+      </div>
+      ${c.cnpj ? `<div class="text-muted" style="font-size:.72rem">CNPJ: ${escapeHtml(c.cnpj)}</div>` : ''}
+      ${c.ja_cadastrado ? '<div class="mt-1"><span class="badge text-bg-secondary">já cadastrado</span></div>' : ''}
+    </button>`).join('');
+}
+
+formCnpj.addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = document.getElementById('btn-cnpj');
+  btn.disabled = true;
+  statusCnpj.innerHTML = '';
+  resultados.innerHTML =
+    '<div class="list-group-item text-muted small">Buscando no Quantum…</div>';
+  try {
+    const resp = await fetch('/buscar-candidatos/', { method: 'POST', body: new FormData(formCnpj) });
+    const data = await resp.json();
+    if (data.erro) {
+      resultados.innerHTML = '';
+      statusCnpj.innerHTML = badge('error') + ' ' + data.erro;
+    } else {
+      renderCandidatos(data.candidatos);
+    }
+  } catch (err) {
+    resultados.innerHTML = '';
+    statusCnpj.innerHTML = badge('error') + ' Falha de conexão.';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+resultados.addEventListener('click', async e => {
+  const item = e.target.closest('.candidato');
+  if (!item) return;
+  resultados.innerHTML = '';
+  statusCnpj.innerHTML = badge('running') + ` Adicionando "${escapeHtml(item.dataset.nome)}"…`;
+  const body = new FormData();
+  body.append('csrfmiddlewaretoken', csrfCnpj);
+  for (const k of ['id_quantum', 'tipo', 'subtipo', 'cnpj', 'nome']) {
+    body.append(k, item.dataset[k] || '');
+  }
+  const data = await fetch('/adicionar-ativo/', { method: 'POST', body }).then(r => r.json());
+  if (data.erro) {
+    statusCnpj.innerHTML = badge('error') + ' ' + data.erro;
+    return;
+  }
+  if (!data.job_id) {  // ativo já cadastrado: nada a importar
+    statusCnpj.innerHTML = badge('done') + ' ' + (data.mensagem || 'Ativo já cadastrado.');
+    return;
+  }
+  pollJob(data.job_id, statusCnpj, { disabled: false });
+});
 </script>
 {% endblock %}
