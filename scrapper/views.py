@@ -6,6 +6,7 @@ from datetime import date as date_type
 
 import numpy as np
 import pandas as pd
+from loguru import logger
 from django.db import close_old_connections
 from django.db.models import Count, Max
 from django.http import HttpResponse, JsonResponse
@@ -29,7 +30,7 @@ def _serie_do_banco_range(ativo: Ativo, di, df) -> pd.Series:
     )
     if not cotacoes:
         return pd.Series(dtype=float)
-    return pd.Series({pd.Timestamp(d): v for d, v in cotacoes}, name=ativo.nome)
+    return pd.Series({pd.Timestamp(d): float(v) for d, v in cotacoes}, name=ativo.nome)
 
 
 def _serie_completa(ativo: Ativo) -> pd.Series:
@@ -39,7 +40,7 @@ def _serie_completa(ativo: Ativo) -> pd.Series:
     )
     if not pts:
         return pd.Series(dtype=float)
-    return pd.Series({pd.Timestamp(d): v for d, v in pts}, name=ativo.nome)
+    return pd.Series({pd.Timestamp(d): float(v) for d, v in pts}, name=ativo.nome)
 
 
 def _carregar_termos_excel(filepath: str) -> list[tuple[str, bool]]:
@@ -257,7 +258,13 @@ def buscar_ativos(request):
                     else service.buscar_por_texto(termo)
                 )
                 if resultados:
-                    service.importar_ativos(resultados[:1])  # 1º candidato
+                    for ativo in service.importar_ativos(resultados[:1]):  # 1º candidato
+                        try:
+                            service.coletar_serie_completa(ativo)
+                        except Exception as exc:  # coleta não derruba o lote
+                            logger.warning(
+                                f"Falha ao coletar cotas de {ativo.nome}: {exc}"
+                            )
                     total += 1
             job.status = "done"
             job.detalhe = f"{total} de {len(termos)} ativos importados de '{arquivo.name}'"
@@ -356,7 +363,12 @@ def adicionar_ativo(request):
     def _run():
         close_old_connections()
         try:
-            ativo = QuantumService().importar_ativos([resultado])[0]
+            service = QuantumService()
+            ativo = service.importar_ativos([resultado])[0]
+            try:
+                service.coletar_serie_completa(ativo)
+            except Exception as exc:  # coleta de cotas não derruba a importação
+                logger.warning(f"Falha ao coletar cotas de {ativo.nome}: {exc}")
             job.status = "done"
             job.detalhe = f"Ativo '{ativo.nome}' adicionado"
             job.concluido_em = timezone.now()
@@ -571,7 +583,7 @@ def exportar_cotas_excel(request):
             .order_by("data")
         )
         if pts:
-            cotas[ativo.nome] = pd.Series({pd.Timestamp(d): v for d, v in pts})
+            cotas[ativo.nome] = pd.Series({pd.Timestamp(d): float(v) for d, v in pts})
 
     if not cotas:
         return HttpResponse("Nenhuma cotação encontrada para os ativos selecionados.", status=404)

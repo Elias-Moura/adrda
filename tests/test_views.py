@@ -11,12 +11,13 @@ from scrapper.views import _candidato_para_json, _resultado_de_request
 class _SyncThread:
     """Thread fake que roda o target em linha — torna jobs assíncronos testáveis."""
 
-    def __init__(self, target=None, daemon=None, **kwargs):
+    def __init__(self, target=None, daemon=None, args=(), **kwargs):
         self._target = target
+        self._args = args
 
     def start(self):
         if self._target:
-            self._target()
+            self._target(*self._args)
 
 
 class TestCandidatoParaJson:
@@ -307,6 +308,56 @@ class TestExcluirAtivoView:
 
 
 @pytest.mark.django_db
+class TestAdicionarAtivoColeta:
+    def _setup(self, monkeypatch):
+        fake = MagicMock()
+        fake.importar_ativos.return_value = [
+            Ativo(tipo="FI", id_quantum="612014", nome="AMW")
+        ]
+        monkeypatch.setattr("scrapper.views.QuantumService", lambda: fake)
+        monkeypatch.setattr("scrapper.views.threading.Thread", _SyncThread)
+        return fake
+
+    def test_coleta_serie_completa_apos_importar(self, client, monkeypatch):
+        fake = self._setup(monkeypatch)
+        resp = client.post("/adicionar-ativo/", {
+            "id_quantum": "612014", "tipo": "FI", "nome": "AMW",
+        })
+        assert resp.status_code == 200
+        fake.coletar_serie_completa.assert_called_once()
+
+    def test_falha_na_coleta_nao_derruba_job(self, client, monkeypatch):
+        fake = self._setup(monkeypatch)
+        fake.coletar_serie_completa.side_effect = RuntimeError("boom")
+        resp = client.post("/adicionar-ativo/", {
+            "id_quantum": "612014", "tipo": "FI", "nome": "AMW",
+        })
+        job_id = resp.json()["job_id"]
+        job = Job.objects.get(id=job_id)
+        assert job.status == "done"  # ativo importado mesmo com coleta falha
+
+
+@pytest.mark.django_db
+class TestBuscarAtivosColeta:
+    def test_coleta_cada_ativo_importado(self, client, monkeypatch, tmp_path):
+        import pandas as pd
+        fake = MagicMock()
+        fake.buscar_por_cnpj.return_value = ["r"]
+        fake.importar_ativos.return_value = [
+            Ativo(tipo="FI", id_quantum="1", nome="A")
+        ]
+        monkeypatch.setattr("scrapper.views.QuantumService", lambda: fake)
+        monkeypatch.setattr("scrapper.views.threading.Thread", _SyncThread)
+
+        xlsx = tmp_path / "ativos.xlsx"
+        pd.DataFrame({"cnpj": ["42550188000191"]}).to_excel(xlsx, index=False)
+        with open(xlsx, "rb") as fh:
+            resp = client.post("/buscar/", {"arquivo": fh})
+        assert resp.status_code == 200
+        fake.coletar_serie_completa.assert_called_once()
+
+
+@pytest.mark.django_db
 class TestAtualizarCarteira:
     def test_400_para_nao_fi(self, client):
         a = Ativo.objects.create(tipo="FII", id_quantum="1", nome="FII X")
@@ -345,3 +396,17 @@ class TestAtualizarCarteira:
         job = Job.objects.get(id=resp.json()["job_id"])
         assert job.status == "error"
         assert "falha de rede" in job.erro
+
+
+@pytest.mark.django_db
+class TestSerieFloat:
+    def test_serie_completa_dtype_float(self):
+        from decimal import Decimal
+        import numpy as np
+        from scrapper.models import CotacaoDiaria
+        from scrapper.views import _serie_completa
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        CotacaoDiaria.objects.create(ativo=ativo, data="2024-01-02", valor=Decimal("100.5"))
+        serie = _serie_completa(ativo)
+        assert serie.dtype == np.float64
+        assert serie.iloc[0] == 100.5

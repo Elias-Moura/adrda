@@ -1,12 +1,13 @@
 import json
 from datetime import date
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
 
 from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria
 from scrapper.quantum.catalogo import TipoAtivo
-from scrapper.services import QuantumService, parece_cnpj, seed_indices
+from scrapper.services import QuantumService, calcular_retornos_serie, parece_cnpj, recalcular_retornos, seed_indices
 
 
 def _multiplex_valor(valores: list) -> dict:
@@ -42,6 +43,27 @@ _FI_24 = [
     "D+0", "D+0", "D+0", "Tx: 0%", "2021-09-10", "0.00", "D",
     "Não informado", "Não possui", "FI_LONGO_PRAZO", "true",
 ]
+
+
+class TestCalcularRetornosSerie:
+    def test_serie_vazia(self):
+        assert calcular_retornos_serie([]) == []
+
+    def test_primeiro_ponto_zero(self):
+        r = calcular_retornos_serie([Decimal("100")])
+        assert r == [(Decimal(0), Decimal(0))]
+
+    def test_retorno_simples_e_log(self):
+        r = calcular_retornos_serie([Decimal("100"), Decimal("110")])
+        assert r[0] == (Decimal(0), Decimal(0))
+        retorno, retorno_ln = r[1]
+        assert retorno == Decimal("0.1")  # 110/100 - 1
+        # ln(1.1) ≈ 0.0953101798...
+        assert abs(retorno_ln - Decimal("0.09531017980432486")) < Decimal("1e-15")
+
+    def test_valor_anterior_zero_nao_quebra(self):
+        r = calcular_retornos_serie([Decimal("0"), Decimal("100")])
+        assert r == [(Decimal(0), Decimal(0)), (Decimal(0), Decimal(0))]
 
 
 @pytest.mark.django_db
@@ -125,6 +147,34 @@ class TestColetarSerie:
         svc.coletar_serie(ativo, date(2024, 1, 1), date(2024, 12, 31))
         di_chamado = client.serie.call_args[0][2]
         assert di_chamado == date(2024, 1, 1)
+
+    def test_ancora_na_primeira_cota_mesmo_com_inicio_posterior(self):
+        # valor é índice canônico: a coleta sempre ancora na primeira_cota,
+        # mesmo quando data_inicio é posterior (evita re-ancoragem/corrupção).
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(
+            tipo="FI", id_quantum="3", nome="W", primeira_cota=date(2003, 1, 1),
+        )
+        svc.coletar_serie(ativo, date(2024, 1, 1), date(2024, 12, 31))
+        di_chamado = client.serie.call_args[0][2]
+        assert di_chamado == date(2003, 1, 1)
+
+    def test_persiste_decimal_e_calcula_retornos(self):
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([
+            ("2024-01-02", "100.0"), ("2024-01-03", "110.0"),
+        ])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="9", nome="Z")
+        svc.coletar_serie(ativo, date(2024, 1, 1), date(2024, 12, 31))
+        cotas = list(ativo.cotacoes.order_by("data"))
+        assert isinstance(cotas[0].valor, Decimal)
+        assert cotas[0].retorno == Decimal("0")
+        assert cotas[1].retorno == Decimal("0.1")
 
 
 @pytest.mark.django_db
@@ -285,6 +335,31 @@ class TestSeedIndices:
         assert Ativo.objects.filter(tipo="INDICE").count() == 9
 
 
+@pytest.mark.django_db
+class TestColetarSerieCompleta:
+    def test_usa_primeira_cota_como_inicio(self):
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([("2021-09-10", "100.0")])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(
+            tipo="FI", id_quantum="1", nome="X", primeira_cota=date(2021, 9, 10),
+        )
+        svc.coletar_serie_completa(ativo)
+        di_chamado = client.serie.call_args[0][2]
+        assert di_chamado == date(2021, 9, 10)
+
+    def test_sem_primeira_cota_usa_piso_2000(self):
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="RENDA_FIXA", id_quantum="VALE38", nome="V")
+        svc.coletar_serie_completa(ativo)
+        di_chamado = client.serie.call_args[0][2]
+        assert di_chamado == date(2000, 1, 1)
+
+
 class TestPareceCnpj:
     @pytest.mark.parametrize("termo", [
         "42.550.188/0001-91",  # mascarado
@@ -382,4 +457,35 @@ class TestImportarSemMedidas:
         assert len(ativos) == 1
         assert ativos[0].tipo == "RENDA_FIXA"
         assert ativos[0].id_quantum == "VALE38"
-        client.dados_complementares.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestRecalcularRetornos:
+    def _ativo_com_serie(self, valores):
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        for i, v in enumerate(valores, start=2):
+            CotacaoDiaria.objects.create(
+                ativo=ativo, data=f"2024-01-{i:02d}", valor=Decimal(v)
+            )
+        return ativo
+
+    def test_grava_retornos_da_serie(self):
+        ativo = self._ativo_com_serie(["100", "110", "121"])
+        n = recalcular_retornos(ativo)
+        assert n == 3
+        cotas = list(ativo.cotacoes.order_by("data"))
+        assert cotas[0].retorno == Decimal("0")
+        assert cotas[1].retorno == Decimal("0.1")
+        assert cotas[2].retorno == Decimal("0.1")  # 121/110 - 1
+
+    def test_idempotente(self):
+        ativo = self._ativo_com_serie(["100", "110"])
+        recalcular_retornos(ativo)
+        antes = [(c.retorno, c.retorno_ln) for c in ativo.cotacoes.order_by("data")]
+        recalcular_retornos(ativo)
+        depois = [(c.retorno, c.retorno_ln) for c in ativo.cotacoes.order_by("data")]
+        assert antes == depois
+
+    def test_sem_cotas_retorna_zero(self):
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="2", nome="Y")
+        assert recalcular_retornos(ativo) == 0

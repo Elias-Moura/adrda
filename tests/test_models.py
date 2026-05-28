@@ -1,9 +1,10 @@
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from django.db import IntegrityError
 
-from scrapper.models import Ativo, CarteiraFundo, PosicaoCarteira
+from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria, PosicaoCarteira
 
 
 @pytest.mark.django_db
@@ -36,3 +37,16 @@ class TestCarteiraFundo:
         PosicaoCarteira.objects.create(carteira=carteira, nome="B", participacao=5.0, ordem=1)
         PosicaoCarteira.objects.create(carteira=carteira, nome="A", participacao=9.0, ordem=0)
         assert [p.nome for p in carteira.posicoes.all()] == ["A", "B"]
+
+
+@pytest.mark.django_db
+class TestCotacaoDiariaDecimal:
+    def test_valor_aceita_decimal_e_retornos_default_zero(self):
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="1", nome="X")
+        c = CotacaoDiaria.objects.create(
+            ativo=ativo, data="2024-01-02", valor=Decimal("100.12345678")
+        )
+        c.refresh_from_db()
+        assert c.valor == Decimal("100.12345678")
+        assert c.retorno == Decimal("0")
+        assert c.retorno_ln == Decimal("0")

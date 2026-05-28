@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from decimal import Decimal, localcontext
 
 from django.db import transaction
 from loguru import logger
@@ -24,6 +25,43 @@ def parece_cnpj(termo: str) -> bool:
     if any(c.isalpha() for c in termo):
         return False
     return len(re.sub(r"\D", "", termo)) == 14
+
+
+def calcular_retornos_serie(valores: list[Decimal]) -> list[tuple[Decimal, Decimal]]:
+    """Retornos diários (simples e log) de uma série ordenada de valores.
+
+    Função pura (sem ORM/rede). O primeiro ponto e qualquer ponto cujo anterior
+    seja zero recebem (0, 0). Usa contexto Decimal de alta precisão para o ln.
+    """
+    resultado: list[tuple[Decimal, Decimal]] = []
+    anterior: Decimal | None = None
+    with localcontext() as ctx:
+        ctx.prec = 50
+        for valor in valores:
+            if anterior is None or anterior == 0:
+                resultado.append((Decimal(0), Decimal(0)))
+            else:
+                razao = valor / anterior
+                resultado.append((razao - 1, razao.ln()))
+            anterior = valor
+    return resultado
+
+
+def recalcular_retornos(ativo: Ativo) -> int:
+    """Recomputa retorno/retorno_ln da série inteira do ativo a partir de `valor`.
+
+    Idempotente. Lê a série ordenada por data, delega o cálculo a
+    `calcular_retornos_serie` e grava via bulk_update. Devolve o nº de cotas.
+    """
+    cotacoes = list(CotacaoDiaria.objects.filter(ativo=ativo).order_by("data"))
+    if not cotacoes:
+        return 0
+    retornos = calcular_retornos_serie([c.valor for c in cotacoes])
+    for cotacao, (retorno, retorno_ln) in zip(cotacoes, retornos):
+        cotacao.retorno = retorno
+        cotacao.retorno_ln = retorno_ln
+    CotacaoDiaria.objects.bulk_update(cotacoes, ["retorno", "retorno_ln"], batch_size=500)
+    return len(cotacoes)
 
 
 class QuantumService:
@@ -91,24 +129,34 @@ class QuantumService:
 
     # ── Cotas ─────────────────────────────────────────────────────────────────
     def coletar_serie(self, ativo: Ativo, data_inicio: date, data_fim: date) -> int:
-        """Coleta a série diária do ativo e faz upsert em CotacaoDiaria."""
+        """Coleta a série diária do ativo, faz upsert de `valor` (Decimal) e
+        recomputa os retornos da série inteira."""
         self._ensure_login()
-        di = ativo.primeira_cota if (ativo.primeira_cota and ativo.primeira_cota > data_inicio) else data_inicio
+        # valor é um índice base-100 canônico: ancoramos sempre na primeira_cota
+        # quando conhecida, para não re-ancorar a série em janelas posteriores.
+        di = ativo.primeira_cota or data_inicio
         raw = self._client.serie(TipoAtivo(ativo.tipo), ativo.id_quantum, di, data_fim)
         serie = parsers.parse_serie(raw)
         if not serie.pontos:
             return 0
         objs = [
-            CotacaoDiaria(ativo=ativo, data=p.data, valor=p.valor)
+            CotacaoDiaria(ativo=ativo, data=p.data, valor=Decimal(str(p.valor)))
             for p in serie.pontos
         ]
-        CotacaoDiaria.objects.bulk_create(
-            objs,
-            update_conflicts=True,
-            unique_fields=["ativo", "data"],
-            update_fields=["valor"],
-        )
+        with transaction.atomic():
+            CotacaoDiaria.objects.bulk_create(
+                objs,
+                update_conflicts=True,
+                unique_fields=["ativo", "data"],
+                update_fields=["valor"],
+            )
+            recalcular_retornos(ativo)
         return len(objs)
+
+    def coletar_serie_completa(self, ativo: Ativo) -> int:
+        """Coleta a série da primeira cota (ou piso 2000-01-01) até hoje."""
+        data_inicio = ativo.primeira_cota or date(2000, 1, 1)
+        return self.coletar_serie(ativo, data_inicio, date.today())
 
     def coletar_carteira(self, ativo: Ativo, competencia: date | None = None) -> CarteiraFundo:
         """Coleta a composição da carteira do fundo (FI) e persiste por competência.
