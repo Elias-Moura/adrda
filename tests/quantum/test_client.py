@@ -101,3 +101,29 @@ class TestSerie:
     def test_devolve_dict_cru(self):
         out = self.c.serie(TipoAtivo.FI, "1", date(2024, 1, 1), date(2024, 12, 31))
         assert out == {"responseList": [{"body": '{"serie":[]}'}]}
+
+
+class TestCarteira:
+    def setup_method(self):
+        self.c = _make_client()
+        self.c._client.post.return_value.status_code = 200
+        self.c._client.post.return_value.json.return_value = {"responseList": [{"body": "[]"}]}
+
+    def test_monta_relative_url_de_carteira(self):
+        self.c.carteira(TipoAtivo.FI, "612014", date(2026, 4, 1))
+        enviado = self.c._client.post.call_args.kwargs["content"]
+        assert "/api/ativos/FI/612014/carteira" in enviado
+        assert "tipoCarteira=INDIVIDUAL" in enviado
+        assert "quantidade=100" in enviado
+        assert "dataCompetencia=2026-04-01" in enviado
+
+    def test_devolve_dict_cru(self):
+        assert self.c.carteira(TipoAtivo.FI, "612014", date(2026, 4, 1)) == {
+            "responseList": [{"body": "[]"}]
+        }
+
+    def test_erro_http_levanta_value_error(self):
+        self.c._client.post.return_value.status_code = 500
+        self.c._client.post.return_value.text = "erro"
+        with pytest.raises(ValueError, match="500"):
+            self.c.carteira(TipoAtivo.FI, "612014", date(2026, 4, 1))

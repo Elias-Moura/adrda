@@ -200,3 +200,38 @@ class QuantumClient:
         if response.status_code != 200:
             raise ValueError(f"{response.status_code=} {response.text}")
         return self._decode_json(response)
+
+    def carteira(
+        self, tipo: TipoAtivo, id_quantum: str, competencia: date,
+        quantidade: int = 100, tipo_carteira: str = "INDIVIDUAL",
+    ) -> dict:
+        """Composição da carteira investida (FI) via multiplex /b. Dict cru.
+
+        Endpoint REST `/api/ativos/{tipo}/{id}/carteira` — só FI retorna dados
+        (FII vem vazio). Exige o Bearer token (já em _headers_api).
+        """
+        relative_url = (
+            f"/api/ativos/{TipoAtivo(tipo).value}/{id_quantum}/carteira"
+            f"?identificador={id_quantum}&tipoItemQuantum={TipoAtivo(tipo).value}"
+            f"&tipoCarteira={tipo_carteira}"
+            f"&dataCompetencia={competencia.strftime('%Y-%m-%d')}"
+            f"&quantidade={quantidade}&exibirSomatorioOutros=true"
+        )
+        payload = json.dumps({
+            "commonHeader": {
+                "Content-Type": "application/json",
+                "Accept-Language": "pt-BR",
+                "x-Moeda": "BRL",
+                "x-Retorno": "Fechamento",
+            },
+            "requests": [{
+                "method": "GET",
+                "headers": {},
+                "body": "",
+                "relativeUrl": relative_url,
+            }],
+        })
+        response = self._client.post(self._API_URL, headers=self._headers_api(), content=payload)
+        if response.status_code != 200:
+            raise ValueError(f"{response.status_code=} {response.text}")
+        return self._decode_json(response)
