@@ -64,7 +64,8 @@
           <div class="col-sm-6">
             <div class="form-check">
               <input class="form-check-input grp-carteira" type="checkbox"
-                name="ids" value="{{ aq.id }}" id="c_{{ aq.id }}" checked>
+                name="ids" value="{{ aq.id }}" id="c_{{ aq.id }}"
+                {% if not preselecionados or aq.id in preselecionados %}checked{% endif %}>
               <label class="form-check-label small" for="c_{{ aq.id }}">
                 {{ aq.nome }}
                 <span class="text-muted" style="font-size:.75rem">· {{ aq.tipo }}</span>

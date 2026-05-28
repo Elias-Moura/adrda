@@ -3,54 +3,259 @@
 {% block nav_ativos %}fw-bold text-white{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0"><i class="bi bi-table me-2"></i>Ativos no Banco ({{ ativos.count }})</h4>
+
+<!-- Cabeçalho -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <h4 class="mb-0"><i class="bi bi-table me-2"></i>Ativos no Banco</h4>
   <a href="{% url 'index' %}" class="btn btn-sm btn-outline-secondary">
-    <i class="bi bi-arrow-left me-1"></i>Voltar
+    <i class="bi bi-arrow-left me-1"></i>Voltar ao Dashboard
   </a>
 </div>
 
+<!-- Cards de resumo (também filtram a tabela) -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card card-resumo h-100 active" role="button" data-grupo="">
+      <div class="card-body py-3">
+        <div class="resumo-label">Total</div>
+        <div class="fs-2 fw-bold text-primary">{{ resumo.total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card card-resumo h-100" role="button" data-grupo="fundo">
+      <div class="card-body py-3">
+        <div class="resumo-label"><i class="bi bi-briefcase me-1"></i>Fundos</div>
+        <div class="fs-2 fw-bold">{{ resumo.fundos }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card card-resumo h-100" role="button" data-grupo="acao">
+      <div class="card-body py-3">
+        <div class="resumo-label"><i class="bi bi-graph-up-arrow me-1"></i>Ações</div>
+        <div class="fs-2 fw-bold">{{ resumo.acoes }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card card-resumo h-100" role="button" data-grupo="renda_fixa">
+      <div class="card-body py-3">
+        <div class="resumo-label"><i class="bi bi-cash-coin me-1"></i>Renda Fixa</div>
+        <div class="fs-2 fw-bold">{{ resumo.renda_fixa }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toolbar: busca + filtro por tipo -->
+<div class="card p-3 mb-3">
+  <div class="row g-2 align-items-center">
+    <div class="col-md">
+      <div class="input-group input-group-sm">
+        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+        <input type="text" class="form-control" id="busca-ativos"
+          placeholder="Buscar por nome, CNPJ ou ticker…" autocomplete="off">
+      </div>
+    </div>
+    <div class="col-md-auto">
+      <select class="form-select form-select-sm" id="filtro-tipo">
+        <option value="">Todos os tipos</option>
+        <option value="fundo">Fundos (FI / FII)</option>
+        <option value="acao">Ações</option>
+        <option value="renda_fixa">Renda Fixa</option>
+      </select>
+    </div>
+    <div class="col-md-auto">
+      <span class="text-muted small" id="contador-ativos"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Tabela -->
 <div class="card p-0">
   <div class="table-responsive">
-    <table class="table table-sm table-hover align-middle mb-0">
+    <table class="table table-sm table-hover align-middle mb-0" id="tabela-ativos">
       <thead class="table-dark">
         <tr>
-          <th>Nome</th>
+          <th class="th-sort" data-col="0" data-type="text">Nome <i class="bi bi-arrow-down-up sort-ico"></i></th>
           <th>CNPJ</th>
-          <th>ID Quantum</th>
-          <th>Tipo</th>
+          <th class="th-sort" data-col="2" data-type="text">Tipo <i class="bi bi-arrow-down-up sort-ico"></i></th>
           <th>Gestora</th>
-          <th>1ª Cota</th>
-          <th>Atualizado</th>
+          <th class="th-sort" data-col="4" data-type="num">Cotas <i class="bi bi-arrow-down-up sort-ico"></i></th>
+          <th class="th-sort" data-col="5" data-type="text">1ª Cota <i class="bi bi-arrow-down-up sort-ico"></i></th>
+          <th class="th-sort" data-col="6" data-type="text">Atualizado <i class="bi bi-arrow-down-up sort-ico"></i></th>
+          <th class="text-end pe-3">Ações</th>
         </tr>
       </thead>
       <tbody>
         {% for ativo in ativos %}
-        <tr>
-          <td class="fw-semibold">{{ ativo.nome }}</td>
-          <td class="text-muted font-monospace small">{{ ativo.cnpj }}</td>
-          {% if ativo.id_quantum %}
-            <td class="font-monospace small">{{ ativo.id_quantum }}</td>
-            <td><span class="badge bg-secondary">{{ ativo.tipo }}</span></td>
-            <td class="small">{{ ativo.gestora|default:"—" }}</td>
-            <td class="small text-muted">
-              {% if ativo.primeira_cota %}{{ ativo.primeira_cota|date:"d/m/Y" }}{% else %}—{% endif %}
-            </td>
-            <td class="small text-muted">{{ ativo.atualizado_em|date:"d/m/Y H:i" }}</td>
-          {% else %}
-            <td colspan="5" class="text-muted small">Sem dados Quantum</td>
-          {% endif %}
+        <tr class="ativo-row"
+            data-grupo="{% if ativo.tipo == 'FI' or ativo.tipo == 'FII' %}fundo{% elif ativo.tipo == 'ACAO' %}acao{% else %}renda_fixa{% endif %}"
+            data-busca="{{ ativo.nome|lower }} {{ ativo.cnpj }} {{ ativo.ticker|lower }}">
+          <td class="fw-semibold">
+            {{ ativo.nome }}
+            {% if ativo.id_quantum %}
+            <div class="text-muted font-monospace" style="font-size:.7rem">ID {{ ativo.id_quantum }}</div>
+            {% endif %}
+          </td>
+          <td class="text-muted font-monospace small">{{ ativo.cnpj|default:"—" }}</td>
+          <td>
+            {% if ativo.tipo == 'FI' %}<span class="badge tipo-fi">Fundo</span>
+            {% elif ativo.tipo == 'FII' %}<span class="badge tipo-fii">FII</span>
+            {% elif ativo.tipo == 'ACAO' %}<span class="badge tipo-acao">Ação</span>
+            {% elif ativo.tipo == 'RENDA_FIXA' %}<span class="badge tipo-rf">Renda Fixa</span>
+            {% else %}<span class="badge bg-secondary">{{ ativo.tipo }}</span>{% endif %}
+          </td>
+          <td class="small">{{ ativo.gestora|default:"—" }}</td>
+          <td class="small" data-sortval="{{ ativo.num_cotas }}">
+            {% if ativo.num_cotas %}
+              <span class="fw-semibold">{{ ativo.num_cotas }}</span>
+              {% if ativo.ultima_cota %}<span class="text-muted">· até {{ ativo.ultima_cota|date:"d/m/y" }}</span>{% endif %}
+            {% else %}
+              <span class="text-muted">sem cotas</span>
+            {% endif %}
+          </td>
+          <td class="small text-muted" data-sortval="{{ ativo.primeira_cota|date:'Y-m-d' }}">
+            {% if ativo.primeira_cota %}{{ ativo.primeira_cota|date:"d/m/Y" }}{% else %}—{% endif %}
+          </td>
+          <td class="small text-muted" data-sortval="{{ ativo.atualizado_em|date:'Y-m-d H:i' }}">
+            {{ ativo.atualizado_em|date:"d/m/Y H:i" }}
+          </td>
+          <td class="text-end pe-3 text-nowrap">
+            <a href="{% url 'relatorio' %}?ids={{ ativo.id }}" target="_blank"
+               class="btn btn-sm btn-outline-dark border-0" title="Gerar relatório">
+              <i class="bi bi-bar-chart-line"></i>
+            </a>
+            {% if ativo.num_cotas %}
+            <a href="{% url 'exportar_cotas_excel' %}?ids={{ ativo.id }}"
+               class="btn btn-sm btn-outline-success border-0" title="Exportar cotas (Excel)">
+              <i class="bi bi-file-earmark-excel"></i>
+            </a>
+            {% else %}
+            <button class="btn btn-sm btn-outline-secondary border-0" disabled title="Sem cotas para exportar">
+              <i class="bi bi-file-earmark-excel"></i>
+            </button>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-secondary border-0 btn-copiar" title="Copiar CNPJ / ID"
+              data-copia="{{ ativo.cnpj|default:ativo.id_quantum }}">
+              <i class="bi bi-clipboard"></i>
+            </button>
+          </td>
         </tr>
         {% empty %}
-        <tr>
-          <td colspan="7" class="text-center text-muted py-4">
+        <tr id="linha-vazia">
+          <td colspan="8" class="text-center text-muted py-5">
+            <i class="bi bi-database-x fs-1 d-block mb-3 opacity-50"></i>
             Nenhum ativo importado ainda.
-            <a href="{% url 'index' %}">Importe via Excel</a>.
+            <a href="{% url 'index' %}">Importe via Excel</a> no Dashboard.
           </td>
         </tr>
         {% endfor %}
+        <tr id="linha-sem-resultado" class="d-none">
+          <td colspan="8" class="text-center text-muted py-4">
+            <i class="bi bi-search me-1"></i>Nenhum ativo corresponde ao filtro.
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const busca = document.getElementById("busca-ativos");
+  const filtroTipo = document.getElementById("filtro-tipo");
+  const contador = document.getElementById("contador-ativos");
+  const cards = document.querySelectorAll(".card-resumo");
+  const tbody = document.querySelector("#tabela-ativos tbody");
+  const semResultado = document.getElementById("linha-sem-resultado");
+  const linhas = () => Array.from(document.querySelectorAll(".ativo-row"));
+
+  // ── Filtro (busca + tipo) ─────────────────────────────────────────────
+  function aplicarFiltros() {
+    const q = busca.value.trim().toLowerCase();
+    const grupo = filtroTipo.value;
+    let visiveis = 0;
+    linhas().forEach(tr => {
+      const okBusca = !q || tr.dataset.busca.includes(q);
+      const okTipo = !grupo || tr.dataset.grupo === grupo;
+      const mostrar = okBusca && okTipo;
+      tr.classList.toggle("d-none", !mostrar);
+      if (mostrar) visiveis++;
+    });
+    const total = linhas().length;
+    if (semResultado) semResultado.classList.toggle("d-none", visiveis > 0 || total === 0);
+    if (contador) contador.textContent = total ? `${visiveis} de ${total} ativos` : "";
+  }
+
+  busca?.addEventListener("input", aplicarFiltros);
+  filtroTipo?.addEventListener("change", () => {
+    cards.forEach(c => c.classList.toggle("active", c.dataset.grupo === filtroTipo.value));
+    aplicarFiltros();
+  });
+
+  // Cards de resumo como atalho de filtro
+  cards.forEach(card => card.addEventListener("click", () => {
+    filtroTipo.value = card.dataset.grupo;
+    cards.forEach(c => c.classList.toggle("active", c === card));
+    aplicarFiltros();
+  }));
+
+  // ── Ordenação por coluna ──────────────────────────────────────────────
+  function valorCelula(tr, col, tipo) {
+    const td = tr.children[col];
+    const bruto = td.dataset.sortval !== undefined ? td.dataset.sortval : td.textContent.trim();
+    return tipo === "num" ? parseFloat(bruto || "0") : bruto.toLowerCase();
+  }
+
+  document.querySelectorAll(".th-sort").forEach(th => {
+    th.style.cursor = "pointer";
+    th.addEventListener("click", () => {
+      const col = parseInt(th.dataset.col, 10);
+      const tipo = th.dataset.type;
+      const asc = th.dataset.dir !== "asc";
+      document.querySelectorAll(".th-sort").forEach(o => delete o.dataset.dir);
+      th.dataset.dir = asc ? "asc" : "desc";
+
+      linhas().sort((a, b) => {
+        const va = valorCelula(a, col, tipo), vb = valorCelula(b, col, tipo);
+        if (va < vb) return asc ? -1 : 1;
+        if (va > vb) return asc ? 1 : -1;
+        return 0;
+      }).forEach(tr => tbody.insertBefore(tr, semResultado));
+    });
+  });
+
+  // ── Copiar CNPJ / ID ──────────────────────────────────────────────────
+  document.querySelectorAll(".btn-copiar").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const valor = btn.dataset.copia || "";
+      if (!valor) return;
+      try { await navigator.clipboard.writeText(valor); } catch (e) { return; }
+      const ico = btn.querySelector("i");
+      const antes = ico.className;
+      ico.className = "bi bi-check-lg text-success";
+      setTimeout(() => { ico.className = antes; }, 1200);
+    });
+  });
+
+  aplicarFiltros();
+})();
+</script>
+
+<style>
+  .card-resumo { transition: box-shadow .15s, transform .15s; }
+  .card-resumo:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+  .card-resumo.active { outline: 2px solid #0d6efd; }
+  .resumo-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:#6c757d; }
+  .sort-ico { font-size:.7rem; opacity:.45; }
+  .th-sort[data-dir] .sort-ico { opacity:1; }
+  .badge.tipo-fi  { background:#0d6efd; }
+  .badge.tipo-fii { background:#0dcaf0; color:#04323a; }
+  .badge.tipo-acao{ background:#198754; }
+  .badge.tipo-rf  { background:#6f42c1; }
+</style>
 {% endblock %}

@@ -7,13 +7,15 @@ from datetime import date as date_type
 import numpy as np
 import pandas as pd
 from django.db import close_old_connections
+from django.db.models import Count, Max
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .models import Ativo, CotacaoDiaria, Job
-from .quantum.catalogo import TipoAtivo
+from .quantum.catalogo import TipoAtivo, rotulo_tipo
+from .quantum.schemas import ResultadoBusca
 from .services import QuantumService
 
 
@@ -79,8 +81,25 @@ def index(request):
 
 
 def ativos_list(request):
-    ativos = Ativo.objects.exclude(tipo=TipoAtivo.INDICE).order_by("nome")
-    return render(request, "scrapper/ativos.html", {"ativos": ativos})
+    ativos = (
+        Ativo.objects.exclude(tipo=TipoAtivo.INDICE)
+        .annotate(num_cotas=Count("cotacoes"), ultima_cota=Max("cotacoes__data"))
+        .order_by("nome")
+    )
+
+    # Contagem por tipo em uma única consulta agregada (cards de resumo).
+    por_tipo = dict(
+        Ativo.objects.exclude(tipo=TipoAtivo.INDICE)
+        .values_list("tipo")
+        .annotate(n=Count("id"))
+    )
+    resumo = {
+        "total": sum(por_tipo.values()),
+        "fundos": por_tipo.get(TipoAtivo.FI, 0) + por_tipo.get(TipoAtivo.FII, 0),
+        "acoes": por_tipo.get(TipoAtivo.ACAO, 0),
+        "renda_fixa": por_tipo.get(TipoAtivo.RENDA_FIXA, 0),
+    }
+    return render(request, "scrapper/ativos.html", {"ativos": ativos, "resumo": resumo})
 
 
 @require_POST
@@ -131,24 +150,89 @@ def buscar_ativos(request):
     return JsonResponse({"job_id": job.id})
 
 
+def _candidato_para_json(resultado: ResultadoBusca, ja_cadastrado: bool = False) -> dict:
+    """Serializa um candidato da busca para a UI (nome, tipo amigável, CNPJ)."""
+    return {
+        "id_quantum": resultado.id_quantum,
+        "tipo": str(resultado.tipo),
+        "tipo_label": rotulo_tipo(resultado.tipo, resultado.subtipo),
+        "nome": resultado.label,
+        "cnpj": resultado.cnpj or "",
+        "subtipo": resultado.subtipo or "",
+        "ja_cadastrado": ja_cadastrado,
+    }
+
+
+def _pares_cadastrados(resultados: list[ResultadoBusca]) -> set[tuple[str, str]]:
+    """Pares (tipo, id_quantum) já presentes no banco, em uma única consulta.
+
+    A chave natural do Ativo é (tipo, id_quantum); o mesmo id em tipo diferente
+    não é duplicata.
+    """
+    ids = {r.id_quantum for r in resultados}
+    if not ids:
+        return set()
+    return {
+        (str(tipo), id_quantum)
+        for tipo, id_quantum in Ativo.objects.filter(
+            id_quantum__in=ids
+        ).values_list("tipo", "id_quantum")
+    }
+
+
+def _resultado_de_request(data) -> ResultadoBusca:
+    """Reconstrói o ResultadoBusca escolhido a partir dos campos do POST,
+    evitando uma segunda busca/login ao Quantum na importação."""
+    return ResultadoBusca(
+        label=data.get("nome", ""),
+        tipo=data.get("tipo", ""),
+        id_quantum=data.get("id_quantum"),
+        subtipo=data.get("subtipo") or None,
+        cnpj=data.get("cnpj") or None,
+    )
+
+
 @require_POST
-def adicionar_cnpj(request):
+def buscar_candidatos(request):
+    """Busca síncrona no Quantum: devolve os candidatos para o usuário escolher."""
     termo = request.POST.get("termo", "").strip()
     if not termo:
-        return JsonResponse({"erro": "Informe o CNPJ ou código/nome do ativo."}, status=400)
+        return JsonResponse(
+            {"erro": "Informe o CNPJ, código ou nome do ativo."}, status=400
+        )
+    try:
+        resultados = QuantumService().buscar_termo(termo)
+    except Exception as exc:
+        return JsonResponse({"erro": f"Falha na busca: {exc}"}, status=502)
+    cadastrados = _pares_cadastrados(resultados)
+    return JsonResponse({"candidatos": [
+        _candidato_para_json(r, (str(r.tipo), r.id_quantum) in cadastrados)
+        for r in resultados
+    ]})
 
-    job = Job.objects.create(tipo="buscar_ativos", detalhe=f"Busca: {termo}")
+
+@require_POST
+def adicionar_ativo(request):
+    """Importa o candidato selecionado pelo usuário (job assíncrono)."""
+    if not request.POST.get("id_quantum") or not request.POST.get("tipo"):
+        return JsonResponse(
+            {"erro": "Candidato inválido: selecione um ativo da lista."}, status=400
+        )
+    resultado = _resultado_de_request(request.POST)
+    if Ativo.objects.filter(tipo=resultado.tipo, id_quantum=resultado.id_quantum).exists():
+        return JsonResponse(
+            {"mensagem": f"Ativo '{resultado.label}' já cadastrado."}
+        )
+    job = Job.objects.create(
+        tipo="buscar_ativos", detalhe=f"Adicionando: {resultado.label}"
+    )
 
     def _run():
         close_old_connections()
         try:
-            service = QuantumService()
-            resultados = service.buscar_termo(termo)
-            if not resultados:
-                raise ValueError(f"{termo!r} não encontrado no Quantum.")
-            ativo = service.importar_ativos(resultados[:1])[0]
+            ativo = QuantumService().importar_ativos([resultado])[0]
             job.status = "done"
-            job.detalhe = f"Ativo '{ativo.nome}' adicionado ({termo})"
+            job.detalhe = f"Ativo '{ativo.nome}' adicionado"
             job.concluido_em = timezone.now()
             job.save()
         except Exception as exc:
@@ -216,14 +300,26 @@ def scrap_cotas(request):
     return JsonResponse({"job_id": job.id})
 
 
-def _selecao_ctx(data_inicio="", data_fim="", erro=""):
+def _selecao_ctx(data_inicio="", data_fim="", erro="", preselecionados=None):
     return {
         "carteiras": Ativo.objects.exclude(tipo=TipoAtivo.INDICE).order_by("nome"),
         "indices": Ativo.objects.filter(tipo=TipoAtivo.INDICE).order_by("nome"),
         "data_inicio": data_inicio,
         "data_fim": data_fim,
         "erro": erro,
+        "preselecionados": preselecionados or set(),
     }
+
+
+def _ids_preselecionados(ids) -> set[int]:
+    """Converte os ids do GET em um conjunto de inteiros (ignora inválidos)."""
+    preselecionados = set()
+    for id_ in ids:
+        try:
+            preselecionados.add(int(id_))
+        except (TypeError, ValueError):
+            continue
+    return preselecionados
 
 
 def relatorio(request):
@@ -234,6 +330,7 @@ def relatorio(request):
     if not ids or not data_inicio_str or not data_fim_str:
         return render(request, "scrapper/relatorio.html", _selecao_ctx(
             data_inicio=data_inicio_str, data_fim=data_fim_str,
+            preselecionados=_ids_preselecionados(ids),
         ))
 
     try:
