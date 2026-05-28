@@ -26,7 +26,7 @@ def _backfill_retornos(apps, schema_editor):
                     cotacao.retorno = razao - 1
                     cotacao.retorno_ln = razao.ln()
                 anterior = cotacao.valor
-        CotacaoDiaria.objects.bulk_update(cotacoes, ["retorno", "retorno_ln"])
+        CotacaoDiaria.objects.bulk_update(cotacoes, ["retorno", "retorno_ln"], batch_size=500)
 
 
 def _noop(apps, schema_editor):

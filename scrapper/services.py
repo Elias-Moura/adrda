@@ -60,7 +60,7 @@ def recalcular_retornos(ativo: Ativo) -> int:
     for cotacao, (retorno, retorno_ln) in zip(cotacoes, retornos):
         cotacao.retorno = retorno
         cotacao.retorno_ln = retorno_ln
-    CotacaoDiaria.objects.bulk_update(cotacoes, ["retorno", "retorno_ln"])
+    CotacaoDiaria.objects.bulk_update(cotacoes, ["retorno", "retorno_ln"], batch_size=500)
     return len(cotacoes)
 
 
