@@ -209,3 +209,25 @@ class TestRelatorioPreselecao:
     def test_sem_ids_preselecao_vazia(self, client):
         ctx = client.get("/relatorio/").context
         assert ctx["preselecionados"] == set()
+
+
+@pytest.mark.django_db
+class TestExcluirAtivoView:
+    def test_exclui_ativo_e_cotacoes_em_cascata(self, client):
+        a = Ativo.objects.create(tipo="FI", id_quantum="1", nome="A")
+        CotacaoDiaria.objects.create(ativo=a, data=date(2026, 1, 1), valor=100.0)
+        CotacaoDiaria.objects.create(ativo=a, data=date(2026, 1, 2), valor=101.0)
+
+        resp = client.post(f"/ativos/{a.id}/excluir/")
+
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert not Ativo.objects.filter(id=a.id).exists()
+        assert CotacaoDiaria.objects.filter(ativo_id=a.id).count() == 0
+
+    def test_id_inexistente_404(self, client):
+        assert client.post("/ativos/99999/excluir/").status_code == 404
+
+    def test_get_nao_permitido(self, client):
+        a = Ativo.objects.create(tipo="FI", id_quantum="1", nome="A")
+        assert client.get(f"/ativos/{a.id}/excluir/").status_code == 405

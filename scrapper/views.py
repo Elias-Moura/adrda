@@ -248,6 +248,14 @@ def adicionar_ativo(request):
 
 
 @require_POST
+def excluir_ativo(request, ativo_id):
+    """Exclui o ativo e, em cascata, suas cotações (on_delete=CASCADE)."""
+    ativo = get_object_or_404(Ativo, id=ativo_id)
+    ativo.delete()
+    return JsonResponse({"ok": True})
+
+
+@require_POST
 def scrap_cotas(request):
     data_inicio = request.POST.get("data_inicio")
     data_fim = request.POST.get("data_fim")
