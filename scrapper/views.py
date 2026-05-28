@@ -168,18 +168,28 @@ def _carteira_selecionada(ativo: Ativo, competencia_str: str | None):
 
 
 def _agregacoes_para_template(carteira) -> list[dict]:
-    """Lista ordenada de dimensões {chave, rotulo, itens:[{rotulo, pct}]} para os cards."""
+    """Dimensões {chave, rotulo, itens, pie} para os cards.
+
+    ``pie`` traz só as fatias positivas (labels/values): pizza não representa
+    participações negativas como "Values to be paid/received -0,03%".
+    """
     if not carteira or not carteira.agregacoes:
         return []
     blocos = []
     for chave, rotulo in _DIMENSOES_CARTEIRA:
         itens = carteira.agregacoes.get(chave) or []
-        if itens:
-            blocos.append({
-                "chave": chave,
-                "rotulo": rotulo,
-                "itens": [{"rotulo": r, "pct": p} for r, p in itens],
-            })
+        if not itens:
+            continue
+        positivos = [(r, p) for r, p in itens if p > 0]
+        blocos.append({
+            "chave": chave,
+            "rotulo": rotulo,
+            "itens": [{"rotulo": r, "pct": p} for r, p in itens],
+            "pie": {
+                "labels": [r for r, _ in positivos],
+                "values": [p for _, p in positivos],
+            },
+        })
     return blocos
 
 
