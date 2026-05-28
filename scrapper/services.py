@@ -151,6 +151,11 @@ class QuantumService:
             recalcular_retornos(ativo)
         return len(objs)
 
+    def coletar_serie_completa(self, ativo: Ativo) -> int:
+        """Coleta a série da primeira cota (ou piso 2000-01-01) até hoje."""
+        data_inicio = ativo.primeira_cota or date(2000, 1, 1)
+        return self.coletar_serie(ativo, data_inicio, date.today())
+
     def coletar_carteira(self, ativo: Ativo, competencia: date | None = None) -> CarteiraFundo:
         """Coleta a composição da carteira do fundo (FI) e persiste por competência.
 

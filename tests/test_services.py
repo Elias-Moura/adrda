@@ -321,6 +321,31 @@ class TestSeedIndices:
         assert Ativo.objects.filter(tipo="INDICE").count() == 9
 
 
+@pytest.mark.django_db
+class TestColetarSerieCompleta:
+    def test_usa_primeira_cota_como_inicio(self):
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([("2021-09-10", "100.0")])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(
+            tipo="FI", id_quantum="1", nome="X", primeira_cota=date(2021, 9, 10),
+        )
+        svc.coletar_serie_completa(ativo)
+        di_chamado = client.serie.call_args[0][2]
+        assert di_chamado == date(2021, 9, 10)
+
+    def test_sem_primeira_cota_usa_piso_2000(self):
+        client = MagicMock()
+        client.serie.return_value = _multiplex_serie([])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="RENDA_FIXA", id_quantum="VALE38", nome="V")
+        svc.coletar_serie_completa(ativo)
+        di_chamado = client.serie.call_args[0][2]
+        assert di_chamado == date(2000, 1, 1)
+
+
 class TestPareceCnpj:
     @pytest.mark.parametrize("termo", [
         "42.550.188/0001-91",  # mascarado
