@@ -1,0 +1,6 @@
+{% extends "scrapper/base.html" %}
+{% block title %}{{ ativo.nome }} — Detalhes{% endblock %}
+{% block content %}
+<h4>{{ ativo.nome }}</h4>
+<p class="text-muted">{{ ativo.tipo }} · {{ num_cotas }} cotações</p>
+{% endblock %}

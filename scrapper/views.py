@@ -7,7 +7,7 @@ from datetime import date as date_type
 import numpy as np
 import pandas as pd
 from django.db import close_old_connections
-from django.db.models import Count, Max
+from django.db.models import Count, Max, Min
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -30,6 +30,16 @@ def _serie_do_banco_range(ativo: Ativo, di, df) -> pd.Series:
     if not cotacoes:
         return pd.Series(dtype=float)
     return pd.Series({pd.Timestamp(d): v for d, v in cotacoes}, name=ativo.nome)
+
+
+def _serie_completa(ativo: Ativo) -> pd.Series:
+    pts = list(
+        CotacaoDiaria.objects.filter(ativo=ativo)
+        .values_list("data", "valor").order_by("data")
+    )
+    if not pts:
+        return pd.Series(dtype=float)
+    return pd.Series({pd.Timestamp(d): v for d, v in pts}, name=ativo.nome)
 
 
 def _carregar_termos_excel(filepath: str) -> list[tuple[str, bool]]:
@@ -100,6 +110,38 @@ def ativos_list(request):
         "renda_fixa": por_tipo.get(TipoAtivo.RENDA_FIXA, 0),
     }
     return render(request, "scrapper/ativos.html", {"ativos": ativos, "resumo": resumo})
+
+
+def detalhe_ativo(request, ativo_id):
+    ativo = get_object_or_404(Ativo, id=ativo_id)
+
+    agg = CotacaoDiaria.objects.filter(ativo=ativo).aggregate(
+        num=Count("id"), primeira=Min("data"), ultima=Max("data")
+    )
+    valor_atual = (
+        CotacaoDiaria.objects.filter(ativo=ativo).order_by("-data")
+        .values_list("valor", flat=True).first()
+    )
+
+    serie = _serie_completa(ativo)
+    from .analise import gerar_grafico_ativo_html
+    grafico_html = gerar_grafico_ativo_html(ativo.nome, serie)
+
+    carteira = (
+        ativo.carteiras.prefetch_related("posicoes").first()
+        if ativo.tipo == TipoAtivo.FI else None
+    )
+
+    return render(request, "scrapper/detalhe.html", {
+        "ativo": ativo,
+        "num_cotas": agg["num"],
+        "primeira_cotacao": agg["primeira"],
+        "ultima_cotacao": agg["ultima"],
+        "valor_atual": valor_atual,
+        "grafico_html": grafico_html,
+        "pode_ter_carteira": ativo.tipo == TipoAtivo.FI,
+        "carteira": carteira,
+    })
 
 
 @require_POST

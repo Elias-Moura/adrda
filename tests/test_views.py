@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scrapper.models import Ativo, CotacaoDiaria, Job
+from scrapper.models import Ativo, CarteiraFundo, CotacaoDiaria, Job, PosicaoCarteira
 from scrapper.quantum.schemas import ResultadoBusca
 from scrapper.views import _candidato_para_json, _resultado_de_request
 
@@ -209,6 +209,34 @@ class TestRelatorioPreselecao:
     def test_sem_ids_preselecao_vazia(self, client):
         ctx = client.get("/relatorio/").context
         assert ctx["preselecionados"] == set()
+
+
+@pytest.mark.django_db
+class TestDetalheAtivo:
+    def test_404_para_id_inexistente(self, client):
+        assert client.get("/ativos/99999/").status_code == 404
+
+    def test_200_e_contexto(self, client):
+        a = Ativo.objects.create(tipo="FI", id_quantum="1", nome="AMW")
+        CotacaoDiaria.objects.create(ativo=a, data=date(2024, 1, 2), valor=100.0)
+        CotacaoDiaria.objects.create(ativo=a, data=date(2024, 1, 3), valor=101.0)
+        ctx = client.get(f"/ativos/{a.id}/").context
+        assert ctx["ativo"].id == a.id
+        assert ctx["num_cotas"] == 2
+        assert ctx["pode_ter_carteira"] is True
+
+    def test_acao_nao_pode_ter_carteira(self, client):
+        a = Ativo.objects.create(tipo="ACAO", id_quantum="2", nome="PETR4")
+        ctx = client.get(f"/ativos/{a.id}/").context
+        assert ctx["pode_ter_carteira"] is False
+
+    def test_carteira_atual_no_contexto(self, client):
+        a = Ativo.objects.create(tipo="FI", id_quantum="3", nome="X")
+        c = CarteiraFundo.objects.create(ativo=a, competencia=date(2026, 4, 1))
+        PosicaoCarteira.objects.create(carteira=c, nome="LFT", participacao=10.0, ordem=0)
+        ctx = client.get(f"/ativos/{a.id}/").context
+        assert ctx["carteira"].id == c.id
+        assert ctx["carteira"].posicoes.count() == 1
 
 
 @pytest.mark.django_db
