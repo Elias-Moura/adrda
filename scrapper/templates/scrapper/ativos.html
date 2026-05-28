@@ -73,7 +73,7 @@
 </div>
 
 <!-- Tabela -->
-<div class="card p-0">
+<div class="card p-0 tabela-card">
   <div class="table-responsive">
     <table class="table table-sm table-hover align-middle mb-0" id="tabela-ativos">
       <thead class="table-dark">
@@ -247,6 +247,11 @@
 </script>
 
 <style>
+  /* Cantos arredondados: recorta a tabela dentro do card */
+  .tabela-card { overflow: hidden; border-radius: .75rem; }
+  /* Padding padrão em cabeçalho e linhas */
+  #tabela-ativos th,
+  #tabela-ativos td { padding: .75rem 1rem; }
   .card-resumo { transition: box-shadow .15s, transform .15s; }
   .card-resumo:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
   .card-resumo.active { outline: 2px solid #0d6efd; }
