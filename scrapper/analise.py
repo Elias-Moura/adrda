@@ -531,8 +531,10 @@ def gerar_relatorio_html(
 def gerar_grafico_ativo_html(nome: str, serie) -> str:
     """Figura Plotly da evolução base-100 de um único ativo.
 
-    Devolve um fragmento HTML (div) sem a lib Plotly embutida — a página inclui
-    o Plotly via CDN. Série vazia -> string vazia (o template mostra um aviso).
+    Devolve um fragmento HTML autossuficiente: a tag <script> da CDN do Plotly
+    vem antes da chamada Plotly.newPlot (include_plotlyjs="cdn"), garantindo que
+    a lib esteja carregada quando o gráfico é plotado, independentemente de onde
+    o fragmento é embutido na página. Série vazia -> "" (o template mostra aviso).
     """
     if serie is None or len(serie) == 0:
         return ""
@@ -549,4 +551,4 @@ def gerar_grafico_ativo_html(nome: str, serie) -> str:
         xaxis_title="Data", yaxis_title="Valor (Base 100)",
         plot_bgcolor="#f8f9fa", paper_bgcolor="white", showlegend=False,
     )
-    return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
+    return fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True})

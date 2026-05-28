@@ -238,6 +238,17 @@ class TestDetalheAtivo:
         assert ctx["carteira"].id == c.id
         assert ctx["carteira"].posicoes.count() == 1
 
+    def test_grafico_carrega_plotly_antes_de_plotar(self, client):
+        # Regressão: a lib Plotly precisa carregar ANTES do Plotly.newPlot,
+        # senão o gráfico não plota (newPlot roda antes do Plotly existir).
+        a = Ativo.objects.create(tipo="FI", id_quantum="9", nome="Com Cotas")
+        CotacaoDiaria.objects.create(ativo=a, data=date(2024, 1, 2), valor=100.0)
+        CotacaoDiaria.objects.create(ativo=a, data=date(2024, 1, 3), valor=101.0)
+        html = client.get(f"/ativos/{a.id}/").content.decode()
+        assert "Plotly.newPlot" in html
+        assert "cdn.plot.ly" in html
+        assert html.index("cdn.plot.ly") < html.index("Plotly.newPlot")
+
 
 @pytest.mark.django_db
 class TestExcluirAtivoView:
