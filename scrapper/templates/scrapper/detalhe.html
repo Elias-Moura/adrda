@@ -1,6 +1,203 @@
 {% extends "scrapper/base.html" %}
 {% block title %}{{ ativo.nome }} — Detalhes{% endblock %}
+{% block nav_ativos %}fw-bold text-white{% endblock %}
+
 {% block content %}
-<h4>{{ ativo.nome }}</h4>
-<p class="text-muted">{{ ativo.tipo }} · {{ num_cotas }} cotações</p>
+{% csrf_token %}
+
+<!-- Cabeçalho -->
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <div class="text-muted small"><a href="{% url 'ativos' %}" class="text-decoration-none">Ativos</a> › Detalhes</div>
+    <h4 class="mb-0 mt-1">
+      {{ ativo.nome }}
+      {% if ativo.tipo == 'FI' %}<span class="badge tipo-fi">Fundo</span>
+      {% elif ativo.tipo == 'FII' %}<span class="badge tipo-fii">FII</span>
+      {% elif ativo.tipo == 'ACAO' %}<span class="badge tipo-acao">Ação</span>
+      {% elif ativo.tipo == 'RENDA_FIXA' %}<span class="badge tipo-rf">Renda Fixa</span>
+      {% else %}<span class="badge bg-secondary">{{ ativo.tipo }}</span>{% endif %}
+    </h4>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{% url 'ativos' %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Voltar</a>
+    <a href="{% url 'relatorio' %}?ids={{ ativo.id }}" target="_blank" class="btn btn-sm btn-dark"><i class="bi bi-bar-chart-line me-1"></i>Relatório</a>
+    {% if num_cotas %}
+    <a href="{% url 'exportar_cotas_excel' %}?ids={{ ativo.id }}" class="btn btn-sm btn-success"><i class="bi bi-file-earmark-excel me-1"></i>Cotas</a>
+    {% endif %}
+    <button class="btn btn-sm btn-outline-danger" id="btn-excluir" data-id="{{ ativo.id }}"><i class="bi bi-trash"></i></button>
+  </div>
+</div>
+
+<!-- Estatísticas -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-4">
+    <div class="card h-100"><div class="card-body py-3">
+      <div class="resumo-label">Cotações</div>
+      <div class="fs-3 fw-bold text-primary">{{ num_cotas }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-4">
+    <div class="card h-100"><div class="card-body py-3">
+      <div class="resumo-label">Período coberto</div>
+      <div class="fw-semibold mt-1">
+        {% if primeira_cotacao %}{{ primeira_cotacao|date:"d/m/Y" }} → {{ ultima_cotacao|date:"d/m/Y" }}{% else %}—{% endif %}
+      </div>
+    </div></div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <div class="card h-100"><div class="card-body py-3">
+      <div class="resumo-label">Valor base-100 atual</div>
+      <div class="fs-3 fw-bold text-success">{% if valor_atual %}{{ valor_atual|floatformat:2 }}{% else %}—{% endif %}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <!-- Ficha -->
+  <div class="col-lg-4">
+    <div class="card h-100"><div class="card-body">
+      <div class="secao-titulo mb-3">Ficha do ativo</div>
+      <table class="table table-sm ficha mb-0">
+        <tr><td class="text-muted">CNPJ</td><td class="text-end font-monospace">{{ ativo.cnpj|default:"—" }}</td></tr>
+        <tr><td class="text-muted">Ticker</td><td class="text-end">{{ ativo.ticker|default:"—" }}</td></tr>
+        <tr><td class="text-muted">Gestora</td><td class="text-end">{{ ativo.gestora|default:"—" }}</td></tr>
+        <tr><td class="text-muted">Setor</td><td class="text-end">{{ ativo.setor|default:"—" }}</td></tr>
+        <tr><td class="text-muted">1ª cota</td><td class="text-end">{% if ativo.primeira_cota %}{{ ativo.primeira_cota|date:"d/m/Y" }}{% else %}—{% endif %}</td></tr>
+        <tr><td class="text-muted">ID Quantum</td><td class="text-end font-monospace">{{ ativo.id_quantum }}</td></tr>
+        <tr><td class="text-muted">Atualizado</td><td class="text-end">{{ ativo.atualizado_em|date:"d/m/Y H:i" }}</td></tr>
+      </table>
+      {% if ativo.metadados %}
+      <button class="btn btn-sm btn-link px-0 mt-2" data-bs-toggle="collapse" data-bs-target="#meta-extra">
+        <i class="bi bi-chevron-down me-1"></i>Metadados extras
+      </button>
+      <div class="collapse" id="meta-extra">
+        <pre class="small bg-light p-2 rounded mb-0" style="max-height:240px;overflow:auto">{{ ativo.metadados }}</pre>
+      </div>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <!-- Gráfico -->
+  <div class="col-lg-8">
+    <div class="card h-100"><div class="card-body">
+      <div class="secao-titulo mb-3">Evolução das cotas (Base 100)</div>
+      {% if grafico_html %}
+        {{ grafico_html|safe }}
+      {% else %}
+        <div class="text-center text-muted py-5">
+          <i class="bi bi-graph-up fs-1 d-block mb-3 opacity-50"></i>
+          Sem cotações para este ativo. Rode o scrap no
+          <a href="{% url 'index' %}">Dashboard</a> para ver a evolução.
+        </div>
+      {% endif %}
+    </div></div>
+  </div>
+</div>
+
+<!-- Carteira do fundo -->
+<div class="card mb-4"><div class="card-body">
+  <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div class="secao-titulo mb-0">
+      Carteira do fundo
+      {% if carteira %}<span class="text-muted fw-normal small">· competência {{ carteira.competencia|date:"m/Y" }} · {{ carteira.posicoes.count }} posições · importada {{ carteira.importada_em|date:"d/m H:i" }}</span>{% endif %}
+    </div>
+    {% if pode_ter_carteira %}
+    <button class="btn btn-sm btn-primary" id="btn-carteira">
+      <i class="bi bi-arrow-repeat me-1"></i>{% if carteira %}Atualizar carteira{% else %}Buscar carteira{% endif %}
+    </button>
+    {% endif %}
+  </div>
+
+  {% if not pode_ter_carteira %}
+    <p class="text-muted mb-0"><i class="bi bi-info-circle me-1"></i>Composição de carteira disponível apenas para fundos (FI).</p>
+  {% elif carteira %}
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle mb-0">
+        <thead class="table-light"><tr><th>Posição</th><th class="text-end" style="width:160px">Participação</th></tr></thead>
+        <tbody>
+          {% for p in carteira.posicoes.all %}
+          <tr>
+            <td>{{ p.nome }}</td>
+            <td class="text-end fw-semibold">{{ p.participacao|floatformat:2 }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-muted mb-0">Nenhuma carteira importada ainda. Clique em <strong>Buscar carteira</strong>.</p>
+  {% endif %}
+</div></div>
+
+<!-- Modal de confirmação de exclusão -->
+<div class="modal fade" id="modal-excluir" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header">
+      <h6 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>Excluir ativo</h6>
+      <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+    </div>
+    <div class="modal-body">
+      <p class="mb-2">Excluir <strong>{{ ativo.nome }}</strong>?</p>
+      <p class="text-muted small mb-0">{% if num_cotas %}Isso também apagará {{ num_cotas }} cotação(ões). {% endif %}Esta ação não pode ser desfeita.</p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+      <button type="button" class="btn btn-danger btn-sm" id="btn-confirmar-excluir"><i class="bi bi-trash me-1"></i>Excluir</button>
+    </div>
+  </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script>
+(function () {
+  const csrf = document.querySelector("[name=csrfmiddlewaretoken]").value;
+
+  // Atualizar/buscar carteira (síncrono; recarrega ao concluir)
+  const btnCarteira = document.getElementById("btn-carteira");
+  btnCarteira?.addEventListener("click", async () => {
+    const original = btnCarteira.innerHTML;
+    btnCarteira.disabled = true;
+    btnCarteira.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Buscando…';
+    try {
+      const resp = await fetch(`/ativos/{{ ativo.id }}/carteira/atualizar/`, {
+        method: "POST", headers: { "X-CSRFToken": csrf },
+      });
+      if (resp.ok) { location.reload(); return; }
+      const data = await resp.json().catch(() => ({}));
+      alert(data.erro || "Falha ao buscar carteira.");
+    } catch (e) {
+      alert("Falha ao buscar carteira.");
+    }
+    btnCarteira.disabled = false;
+    btnCarteira.innerHTML = original;
+  });
+
+  // Excluir (redireciona para a lista ao concluir)
+  const modal = new bootstrap.Modal(document.getElementById("modal-excluir"));
+  const btnConfirmar = document.getElementById("btn-confirmar-excluir");
+  document.getElementById("btn-excluir")?.addEventListener("click", () => modal.show());
+  btnConfirmar?.addEventListener("click", async () => {
+    btnConfirmar.disabled = true;
+    try {
+      const resp = await fetch(`/ativos/{{ ativo.id }}/excluir/`, {
+        method: "POST", headers: { "X-CSRFToken": csrf },
+      });
+      if (resp.ok) { window.location.href = "{% url 'ativos' %}"; return; }
+    } catch (e) { /* cai no reset abaixo */ }
+    btnConfirmar.disabled = false;
+  });
+})();
+</script>
+
+<style>
+  .secao-titulo { font-weight:700; font-size:.95rem; border-left:3px solid #0d6efd; padding-left:10px; }
+  .resumo-label { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; color:#6c757d; }
+  .ficha td { padding:.4rem .25rem; }
+  .badge.tipo-fi  { background:#0d6efd; }
+  .badge.tipo-fii { background:#0dcaf0; color:#04323a; }
+  .badge.tipo-acao{ background:#198754; }
+  .badge.tipo-rf  { background:#6f42c1; }
+</style>
 {% endblock %}
