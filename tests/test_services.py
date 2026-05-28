@@ -149,7 +149,19 @@ class TestColetarCarteira:
         carteira = svc.coletar_carteira(ativo, competencia=date(2026, 4, 1))
         assert carteira.posicoes.count() == 2
         assert carteira.posicoes.first().nome == "LFT 2030"
+        assert carteira.posicoes.first().participacao == 12.3
         assert carteira.posicoes.first().ordem == 0
+
+    def test_carteira_vazia_persiste_sem_posicoes(self):
+        # Fundo sem composição publicada: a API real retorna [] (caso válido).
+        client = MagicMock()
+        client.carteira.return_value = _multiplex_carteira([])
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        ativo = Ativo.objects.create(tipo="FI", id_quantum="2", nome="Vazio")
+        carteira = svc.coletar_carteira(ativo, competencia=date(2026, 4, 1))
+        assert CarteiraFundo.objects.filter(ativo=ativo).count() == 1
+        assert carteira.posicoes.count() == 0
 
     def test_upsert_substitui_posicoes_antigas(self):
         client = MagicMock()
