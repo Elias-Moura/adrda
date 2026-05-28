@@ -87,3 +87,45 @@ class Job(models.Model):
 
     def __str__(self):
         return f"Job #{self.id} ({self.get_tipo_display()}) — {self.get_status_display()}"
+
+
+class CarteiraFundo(models.Model):
+    """Composição da carteira de um fundo numa competência (mês de referência)."""
+
+    ativo = models.ForeignKey(
+        Ativo, on_delete=models.CASCADE, related_name="carteiras"
+    )
+    competencia = models.DateField()
+    importada_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-competencia"]
+        verbose_name = "Carteira de Fundo"
+        verbose_name_plural = "Carteiras de Fundo"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["ativo", "competencia"], name="carteira_ativo_competencia"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.ativo.nome} — {self.competencia:%m/%Y}"
+
+
+class PosicaoCarteira(models.Model):
+    """Uma posição (ativo investido) dentro de uma CarteiraFundo."""
+
+    carteira = models.ForeignKey(
+        CarteiraFundo, on_delete=models.CASCADE, related_name="posicoes"
+    )
+    nome = models.CharField(max_length=255)
+    participacao = models.FloatField()
+    ordem = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["ordem"]
+        verbose_name = "Posição da Carteira"
+        verbose_name_plural = "Posições da Carteira"
+
+    def __str__(self):
+        return f"{self.nome}: {self.participacao:.2f}%"
