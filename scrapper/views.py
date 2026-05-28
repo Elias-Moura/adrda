@@ -133,22 +133,22 @@ def buscar_ativos(request):
 
 @require_POST
 def adicionar_cnpj(request):
-    cnpj = request.POST.get("cnpj", "").strip()
-    if not cnpj:
-        return JsonResponse({"erro": "Informe o CNPJ."}, status=400)
+    termo = request.POST.get("termo", "").strip()
+    if not termo:
+        return JsonResponse({"erro": "Informe o CNPJ ou código/nome do ativo."}, status=400)
 
-    job = Job.objects.create(tipo="buscar_ativos", detalhe=f"CNPJ: {cnpj}")
+    job = Job.objects.create(tipo="buscar_ativos", detalhe=f"Busca: {termo}")
 
     def _run():
         close_old_connections()
         try:
             service = QuantumService()
-            resultados = service.buscar_por_cnpj(cnpj)
+            resultados = service.buscar_termo(termo)
             if not resultados:
-                raise ValueError(f"CNPJ {cnpj!r} não encontrado no Quantum.")
+                raise ValueError(f"{termo!r} não encontrado no Quantum.")
             ativo = service.importar_ativos(resultados[:1])[0]
             job.status = "done"
-            job.detalhe = f"Ativo '{ativo.nome}' adicionado (CNPJ: {cnpj})"
+            job.detalhe = f"Ativo '{ativo.nome}' adicionado ({termo})"
             job.concluido_em = timezone.now()
             job.save()
         except Exception as exc:

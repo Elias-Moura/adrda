@@ -6,7 +6,7 @@ import pytest
 
 from scrapper.models import Ativo, CotacaoDiaria
 from scrapper.quantum.catalogo import TipoAtivo
-from scrapper.services import QuantumService, seed_indices
+from scrapper.services import QuantumService, parece_cnpj, seed_indices
 
 
 def _multiplex_valor(valores: list) -> dict:
@@ -138,6 +138,58 @@ class TestSeedIndices:
         seed_indices()
         seed_indices()
         assert Ativo.objects.filter(tipo="INDICE").count() == 9
+
+
+class TestPareceCnpj:
+    @pytest.mark.parametrize("termo", [
+        "42.550.188/0001-91",  # mascarado
+        "42550188000191",      # 14 dígitos crus
+        " 42550188000191 ",    # com espaços
+    ])
+    def test_reconhece_cnpj(self, termo):
+        assert parece_cnpj(termo) is True
+
+    @pytest.mark.parametrize("termo", [
+        "HASH11",          # ETF
+        "PETR4",           # ação
+        "Fundo XP",        # nome
+        "IVVB11",          # FII/ETF
+        "",                # vazio
+    ])
+    def test_rejeita_texto(self, termo):
+        assert parece_cnpj(termo) is False
+
+
+@pytest.mark.django_db
+class TestBuscarTermo:
+    def test_ticker_usa_busca_por_texto(self):
+        client = MagicMock()
+        client.buscar.return_value = []
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        svc.buscar_termo("HASH11")
+        # texto: is_cnpj=False na primeira (e única) tentativa após fallback vazio
+        chamadas = [c.kwargs.get("is_cnpj") for c in client.buscar.call_args_list]
+        assert chamadas[0] is False
+
+    def test_cnpj_usa_busca_por_cnpj(self):
+        client = MagicMock()
+        client.buscar.return_value = []
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        svc.buscar_termo("42.550.188/0001-91")
+        chamadas = [c.kwargs.get("is_cnpj") for c in client.buscar.call_args_list]
+        assert chamadas[0] is True
+
+    def test_fallback_para_texto_quando_cnpj_vazio(self):
+        client = MagicMock()
+        client.buscar.side_effect = [[], _GRUPOS_FI]  # cnpj vazio -> texto
+        svc = QuantumService(client=client)
+        svc._logged_in = True
+        resultados = svc.buscar_termo("42.550.188/0001-91")
+        assert resultados  # achou no fallback
+        chamadas = [c.kwargs.get("is_cnpj") for c in client.buscar.call_args_list]
+        assert chamadas == [True, False]
 
 
 @pytest.mark.django_db

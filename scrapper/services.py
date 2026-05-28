@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from django.db import transaction
@@ -15,6 +16,14 @@ from scrapper.quantum.catalogo import INDICES, MEDIDAS_POR_TIPO, TipoAtivo
 from scrapper.quantum.client import QuantumClient
 from scrapper.quantum.schemas import AtivoQuantum as AtivoQuantumSchema
 from scrapper.quantum.schemas import ResultadoBusca
+
+
+def parece_cnpj(termo: str) -> bool:
+    """Heurística: um CNPJ tem 14 dígitos e nenhuma letra (cru ou mascarado).
+    Tickers (HASH11, PETR4) e nomes contêm letras -> busca por texto."""
+    if any(c.isalpha() for c in termo):
+        return False
+    return len(re.sub(r"\D", "", termo)) == 14
 
 
 class QuantumService:
@@ -37,6 +46,13 @@ class QuantumService:
     def buscar_por_cnpj(self, cnpj: str) -> list[ResultadoBusca]:
         self._ensure_login()
         return parsers.parse_resultados_busca(self._client.buscar(cnpj, is_cnpj=True))
+
+    def buscar_termo(self, termo: str) -> list[ResultadoBusca]:
+        """Busca avulsa por CNPJ ou código/nome. Detecta o tipo do termo e,
+        se a busca preferencial vier vazia, tenta a outra como fallback."""
+        if parece_cnpj(termo):
+            return self.buscar_por_cnpj(termo) or self.buscar_por_texto(termo)
+        return self.buscar_por_texto(termo) or self.buscar_por_cnpj(termo)
 
     # ── Import (rede -> pydantic -> ORM) ──────────────────────────────────────
     def importar_ativos(self, resultados: list[ResultadoBusca]) -> list[Ativo]:

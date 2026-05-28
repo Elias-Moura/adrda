@@ -48,13 +48,13 @@
 
     <!-- CNPJ avulso -->
     <div class="card p-4 mb-4">
-      <h6 class="mb-1 fw-semibold"><i class="bi bi-plus-circle me-2 text-primary"></i>Adicionar por CNPJ</h6>
-      <p class="text-muted mb-3" style="font-size:.82rem">Busca um ativo pelo CNPJ no Quantum.</p>
+      <h6 class="mb-1 fw-semibold"><i class="bi bi-plus-circle me-2 text-primary"></i>Adicionar ativo</h6>
+      <p class="text-muted mb-3" style="font-size:.82rem">Busca por CNPJ, código (HASH11, PETR4) ou nome no Quantum.</p>
       <form id="form-cnpj">
         {% csrf_token %}
         <div class="input-group">
-          <input type="text" class="form-control form-control-sm font-monospace"
-            name="cnpj" placeholder="00.000.000/0000-00" maxlength="20" required>
+          <input type="text" class="form-control form-control-sm"
+            name="termo" placeholder="CNPJ, ticker ou nome" maxlength="60" required>
           <button type="submit" class="btn btn-primary btn-sm" id="btn-cnpj">
             <i class="bi bi-search"></i>
           </button>
@@ -99,7 +99,7 @@
         </div>
         {% else %}
         <div class="alert alert-light text-muted small mb-3 py-2">
-          Nenhum ativo importado ainda. Importe via Excel ou CNPJ acima.
+          Nenhum ativo importado ainda. Importe via Excel ou adicione um ativo acima.
         </div>
         {% endif %}
 
