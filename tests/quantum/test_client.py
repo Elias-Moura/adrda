@@ -117,6 +117,12 @@ class TestCarteira:
         assert "quantidade=100" in enviado
         assert "dataCompetencia=2026-04-01" in enviado
 
+    def test_usa_metodo_get_no_multiplex(self):
+        # A API rejeita POST no request interno com 405 (Allow: GET) — travado aqui.
+        self.c.carteira(TipoAtivo.FI, "612014", date(2026, 4, 1))
+        enviado = self.c._client.post.call_args.kwargs["content"]
+        assert '"method": "GET"' in enviado
+
     def test_devolve_dict_cru(self):
         assert self.c.carteira(TipoAtivo.FI, "612014", date(2026, 4, 1)) == {
             "responseList": [{"body": "[]"}]
