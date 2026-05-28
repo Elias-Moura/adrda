@@ -44,13 +44,17 @@ class Ativo(models.Model):
 
 
 class CotacaoDiaria(models.Model):
-    """Série de valor base-100 por ativo e data."""
+    """Série de valor base-100 por ativo e data, com retorno diário persistido."""
 
     ativo = models.ForeignKey(
         Ativo, on_delete=models.CASCADE, related_name="cotacoes"
     )
     data = models.DateField(db_index=True)
-    valor = models.FloatField()
+    # Índice canônico base-100 ancorado na primeira cota do ativo.
+    valor = models.DecimalField(max_digits=20, decimal_places=8)
+    # Retornos diários NÃO acumulados; primeiro ponto da série = 0 (sem anterior).
+    retorno = models.DecimalField(max_digits=18, decimal_places=12, default=0)
+    retorno_ln = models.DecimalField(max_digits=18, decimal_places=12, default=0)
 
     class Meta:
         ordering = ["data"]
